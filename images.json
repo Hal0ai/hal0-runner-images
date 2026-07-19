@@ -45,6 +45,8 @@
     "comfyui": {
       "image": "ghcr.io/hal0ai/hal0-comfyui",
       "tag": "latest",
+      "digest": "sha256:fd8c89309ed69e26d0f7ca1483a5775ab0ef336d12f3d62f9a20c7dd0b5d478b",
+      "published": "2026-07-19 (tags: main, latest; anonymously pullable)",
       "manifest_key": "comfyui",
       "ownership": "owned",
       "build": { "context": "comfyui", "dockerfile": "comfyui/Dockerfile", "platforms": ["linux/amd64"], "build_args_from": "comfyui/versions.env" },

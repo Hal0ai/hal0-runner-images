@@ -11,42 +11,34 @@ name: Build runner images
 # Migrated from the app repo's .github/workflows/toolbox.yml (which only built
 # qwen3tts). Model: one matrix leg per owned image; linux/amd64; GitHub-hosted
 # runner is fine (build only pulls base layers + pip/dnf — no GPU needed).
+#
+# DISPATCH-ONLY by design. There is NO push/PR auto-trigger: a metadata edit
+# (images.json, a doc) must not rebuild + re-push every runner image, and most
+# owned images (kokoro/moonshine/qwen3tts/flm/cpu) are already published from
+# other lineages — re-pushing them from here 403s (their org packages aren't
+# writable by this repo) and would churn their digests. Build deliberately, one
+# or a few images at a time, via `only`. Referenced images (vulkan/rocm/rocmfpx)
+# build in their own repos.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "cpu/**"
-      - "flm/**"
-      - "kokoro/**"
-      - "moonshine/**"
-      - "qwen3tts/**"
-      - "comfyui/**"
-      - "images.json"
-      - ".github/workflows/build-matrix.yml"
-  pull_request:
-    paths:
-      - "cpu/**"
-      - "flm/**"
-      - "kokoro/**"
-      - "moonshine/**"
-      - "qwen3tts/**"
-      - "comfyui/**"
-      - "images.json"
   workflow_dispatch:
     inputs:
       only:
-        description: "Comma-separated image keys to build (blank = all owned)"
+        description: "Comma-separated image keys to build (blank = all owned — rarely what you want)"
         type: string
-        default: ""
+        default: "comfyui"
       push:
         description: "Push to ghcr.io (true) or build-only dry-run (false)"
         type: boolean
         default: true
+      open_manifest_pr:
+        description: "After push, resolve digests + open a manifest-bump PR against Hal0ai/hal0"
+        type: boolean
+        default: false
 
 concurrency:
   group: build-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -164,7 +156,7 @@ jobs:
   # manifest-bump PR against Hal0ai/hal0.
   emit-manifest:
     needs: build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: inputs.open_manifest_pr && inputs.push
     runs-on: ubuntu-latest
     permissions:
       contents: read
