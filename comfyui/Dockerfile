@@ -51,9 +51,12 @@ RUN python -m pip install --upgrade pip setuptools wheel
 # To bump: pick a date present for ALL THREE packages on the SAME index line.
 # Mixing dates across the triple is an ABI mismatch — do not.
 ARG ROCM_INDEX=https://rocm.nightlies.amd.com/v2/gfx1151/
-ARG TORCH_VER=2.9.1+rocm7.13.0a20260513
-ARG VISION_VER=0.24.0+rocm7.13.0a20260513
-ARG AUDIO_VER=2.9.0+rocm7.13.0a20260513
+# Date must ship cp313 wheels (base venv is python3.13) for all three; the
+# index rotates python tags by date. 20260501 = latest common cp313 date.
+# See versions.env for the bump procedure.
+ARG TORCH_VER=2.9.1+rocm7.13.0a20260501
+ARG VISION_VER=0.24.0+rocm7.13.0a20260501
+ARG AUDIO_VER=2.9.0+rocm7.13.0a20260501
 RUN python -m pip install --index-url ${ROCM_INDEX} \
         "torch==${TORCH_VER}" \
         "torchvision==${VISION_VER}" \

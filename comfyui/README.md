@@ -35,9 +35,22 @@ commit SHA (see `versions.env`). No floating tags remain. Before a release,
 re-resolve to current SHAs if a newer ComfyUI/node/base is wanted — the pin is
 the baseline, not a freeze.
 
-Remaining pre-publish work: build the image on a host and smoke-test
-(`assert 'rocm' in torch.__version__` + a `/system_stats` hit) before pushing
-`:latest` and pinning its digest in the app manifest.
+## Smoke-tested on gfx1151 (2026-07-19)
+
+Built + run on a real Strix Halo box (143). Results:
+- Builds clean (29 steps).
+- ROCm torch `2.9.1+rocm7.13.0a20260501` loads, `torch.cuda.is_available()`
+  True, device = **Radeon 8060S Graphics** (gfx1151 iGPU).
+- ComfyUI 0.28.0 starts and serves `/system_stats` (sees 133 GB unified RAM).
+
+The smoke test caught a real pin bug: the initial torch date `20260513` ships
+no cp313 wheel (only cp310/cp312/cp314), so it wouldn't install on the
+python3.13 base. Corrected to `20260501` (latest common cp313 date). See
+`versions.env`.
+
+Remaining pre-publish: push `:latest` to ghcr + pin its digest in the app
+manifest (needs package Write for hal0-runner-images). Optional: a trivial
+end-to-end gen against a real model (needs a checkpoint mounted).
 
 ## Build
 
