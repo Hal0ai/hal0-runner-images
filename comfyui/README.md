@@ -41,7 +41,14 @@ Built + run on a real Strix Halo box (143). Results:
 - Builds clean (29 steps).
 - ROCm torch `2.9.1+rocm7.13.0a20260501` loads, `torch.cuda.is_available()`
   True, device = **Radeon 8060S Graphics** (gfx1151 iGPU).
-- ComfyUI 0.28.0 starts and serves `/system_stats` (sees 133 GB unified RAM).
+- ComfyUI 0.28.0 starts and serves. Its own device detection (from logs) is
+  correct on gfx1151:
+  `Total VRAM 118784 MB` (~116 GiB unified/GTT pool — full, not a carveout),
+  `total RAM 127439 MB` (system, ~128 GB box), `AMD arch: gfx1151`,
+  `ROCm version: (7, 13)`, `Device: cuda:0 Radeon 8060S Graphics : native`
+  (no HSA spoof), `vram state: NORMAL_VRAM`. AMDGPUMonitor custom node loads.
+  (Note: `system_stats.system.ram_total` reports host RAM, not VRAM — the
+  VRAM figure that governs offload is the `Total VRAM` above / `devices[].vram_total`.)
 
 The smoke test caught a real pin bug: the initial torch date `20260513` ships
 no cp313 wheel (only cp310/cp312/cp314), so it wouldn't install on the
