@@ -6,7 +6,8 @@
 # faithful to the pinned digest
 #   sha256:1ac80acc00a2e9d578b077fa0a3f2c3e3f32f4f3da5080f346838e1c5a540456
 # except for build metadata (timestamps) which don't affect runtime behaviour.
-# Rebuild + re-pin via scripts/emit-manifest.sh once this is confirmed.
+# REBUILD-VERIFIED 2026-07-19: builds clean; container serves and /health
+# returns 200 {"status":"ok","model_loaded":true,...} (54 voices, af_bella).
 #
 # Upstream reference: https://github.com/thewh1teagle/kokoro-onnx
 #

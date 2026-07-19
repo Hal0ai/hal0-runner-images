@@ -24,7 +24,7 @@
       "manifest_key": "kokoro",
       "ownership": "owned",
       "build": { "context": "kokoro", "dockerfile": "kokoro/Dockerfile", "platforms": ["linux/amd64"] },
-      "notes": "Kokoro-82M TTS (CPU ONNX). Dockerfile RECONSTRUCTED from image history 2026-07-19 — verify against pinned digest before trusting a rebuild."
+      "notes": "Kokoro-82M TTS (CPU ONNX). Dockerfile RECONSTRUCTED from image history 2026-07-19; rebuild-VERIFIED same day (built clean + container serves, /health 200 model_loaded=true, 54 voices, default af_bella)."
     },
     "moonshine": {
       "image": "ghcr.io/hal0ai/hal0-toolbox-moonshine",
@@ -32,7 +32,7 @@
       "manifest_key": "moonshine",
       "ownership": "owned",
       "build": { "context": "moonshine", "dockerfile": "moonshine/Dockerfile", "platforms": ["linux/amd64"] },
-      "notes": "Moonshine STT (CPU/Vulkan). Dockerfile RECONSTRUCTED from ghcr config blob 2026-07-19 — verify before trusting a rebuild."
+      "notes": "Moonshine STT (CPU/Vulkan). Dockerfile RECONSTRUCTED from ghcr config blob 2026-07-19; rebuild-VERIFIED same day (built clean + container serves, /health 200 model_loaded=true, model_id moonshine-small_streaming-en)."
     },
     "qwen3tts": {
       "image": "ghcr.io/hal0ai/hal0-toolbox-qwen3tts",

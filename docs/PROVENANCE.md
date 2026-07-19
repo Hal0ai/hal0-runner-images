@@ -10,8 +10,8 @@ hal0-owned; most just wasn't in the app repo.
 | cpu | cpu | app repo `packaging/toolbox/cpu.Dockerfile` → `cpu/` here | migrated as-is |
 | flm | flm | app repo `packaging/toolbox/flm.Dockerfile` → `flm/` here | migrated as-is |
 | qwen3tts | qwen3tts | app repo `packaging/toolbox/qwen3tts*` → `qwen3tts/` here | migrated as-is |
-| kokoro | kokoro | **was lost** (only server.py in app repo) — RECONSTRUCTED from `ghcr.io/hal0ai/hal0-toolbox-kokoro:v1` layer history → `kokoro/Dockerfile` | reconstructed, verify before trusting rebuild |
-| moonshine | moonshine | **was lost** — RECONSTRUCTED from ghcr config blob (image not on any reachable box) → `moonshine/Dockerfile` | reconstructed, verify |
+| kokoro | kokoro | **was lost** (only server.py in app repo) — RECONSTRUCTED from `ghcr.io/hal0ai/hal0-toolbox-kokoro:v1` layer history → `kokoro/Dockerfile` | reconstructed + **rebuild-verified** 2026-07-19 (serves, /health ok) |
+| moonshine | moonshine | **was lost** — RECONSTRUCTED from ghcr config blob (image not on any reachable box) → `moonshine/Dockerfile` | reconstructed + **rebuild-verified** 2026-07-19 (serves, /health ok) |
 | comfyui | comfyui | **NEW** hal0-owned `comfyui/Dockerfile` (replaces third-party kyuz0) | drafted, pin `*_REF` before release |
 | vulkan | vulkan | `Hal0ai/amd-strix-halo-toolboxes` `toolboxes/Dockerfile.vulkan-radv` (own CI) | referenced, not vendored |
 | rocm | rocm | `Hal0ai/amd-strix-halo-toolboxes` `toolboxes/Dockerfile.rocm-7.2.4` (own CI) | referenced |

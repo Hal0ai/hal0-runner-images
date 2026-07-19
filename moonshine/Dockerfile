@@ -6,8 +6,9 @@
 # reachable box; the original Dockerfile was built ad-hoc and never landed
 # in the app repo). Verified faithful to the pinned digest
 #   sha256:bf07e3d5640fc1d009298be0600b62ec24185f80d7c8bed47321742fce17aa31
-# except for build metadata (timestamps). Rebuild + re-pin via
-# scripts/emit-manifest.sh once confirmed.
+# except for build metadata (timestamps).
+# REBUILD-VERIFIED 2026-07-19: builds clean; container serves and /health
+# returns 200 {"status":"ok","model_loaded":true,...} (moonshine-small_streaming-en).
 #
 # Build context: this directory (moonshine/).
 
