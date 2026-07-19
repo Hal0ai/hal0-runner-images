@@ -9,7 +9,7 @@
       "ownership": "owned",
       "publish": "external",
       "build": { "context": "cpu", "dockerfile": "cpu/Dockerfile", "platforms": ["linux/amd64"] },
-      "notes": "llama.cpp CPU/Vulkan fallback. Self-contained (clones llama.cpp in builder)."
+      "notes": "llama.cpp CPU/Vulkan fallback. Self-contained (clones llama.cpp in builder). Migrated as-is from app repo; BUILD-VERIFIED 2026-07-19 (builds clean on 143)."
     },
     "flm": {
       "image": "ghcr.io/hal0ai/hal0-toolbox-flm",
@@ -18,7 +18,7 @@
       "ownership": "owned",
       "publish": "external",
       "build": { "context": "flm", "dockerfile": "flm/Dockerfile", "platforms": ["linux/amd64"] },
-      "notes": "FastFlowLM v0.9.44 on AMD XDNA2 NPU. FLM_REF build-arg controls upstream tag."
+      "notes": "FastFlowLM v0.9.44 on AMD XDNA2 NPU. FLM_REF build-arg controls upstream tag. Migrated as-is from app repo; BUILD-VERIFIED 2026-07-19 (full XRT+Rust+FastFlowLM build completes clean on 143; runtime needs the NPU)."
     },
     "kokoro": {
       "image": "ghcr.io/hal0ai/hal0-toolbox-kokoro",
@@ -45,7 +45,7 @@
       "ownership": "owned",
       "publish": "external",
       "build": { "context": "qwen3tts", "dockerfile": "qwen3tts/Dockerfile", "platforms": ["linux/amd64"] },
-      "notes": "Qwen3-TTS multilingual GPU TTS (ROCm). Migrated as-is from app repo packaging/toolbox."
+      "notes": "Qwen3-TTS multilingual GPU TTS (ROCm). Migrated as-is from app repo packaging/toolbox. BUILD-VERIFIED 2026-07-19 (builds clean on 143; runtime needs GPU+model)."
     },
     "comfyui": {
       "image": "ghcr.io/hal0ai/hal0-comfyui",
