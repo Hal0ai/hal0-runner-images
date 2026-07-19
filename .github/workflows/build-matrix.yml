@@ -1,0 +1,198 @@
+name: Build runner images
+
+# Build + push the OWNED hal0 runner images (those with a Dockerfile in this
+# repo) to ghcr.io/hal0ai/, then emit their published digests for a
+# manifest-bump PR against Hal0ai/hal0.
+#
+# `referenced` images (vulkan, rocm, rocmfpx — see images.json) are built by
+# their own source repos' CI and are NOT built here; scripts/emit-manifest.sh
+# still pins their published digests.
+#
+# Migrated from the app repo's .github/workflows/toolbox.yml (which only built
+# qwen3tts). Model: one matrix leg per owned image; linux/amd64; GitHub-hosted
+# runner is fine (build only pulls base layers + pip/dnf — no GPU needed).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "cpu/**"
+      - "flm/**"
+      - "kokoro/**"
+      - "moonshine/**"
+      - "qwen3tts/**"
+      - "comfyui/**"
+      - "images.json"
+      - ".github/workflows/build-matrix.yml"
+  pull_request:
+    paths:
+      - "cpu/**"
+      - "flm/**"
+      - "kokoro/**"
+      - "moonshine/**"
+      - "qwen3tts/**"
+      - "comfyui/**"
+      - "images.json"
+  workflow_dispatch:
+    inputs:
+      only:
+        description: "Comma-separated image keys to build (blank = all owned)"
+        type: string
+        default: ""
+      push:
+        description: "Push to ghcr.io (true) or build-only dry-run (false)"
+        type: boolean
+        default: true
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  # Derive the build matrix from images.json (owned images only), honouring
+  # the optional workflow_dispatch `only` filter.
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: set
+        shell: bash
+        run: |
+          python3 - "${{ github.event.inputs.only }}" <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os, sys
+          only = {s.strip() for s in (sys.argv[1] or "").split(",") if s.strip()}
+          doc = json.load(open("images.json"))
+          legs = []
+          for key, e in doc["images"].items():
+              if e.get("ownership") != "owned":
+                  continue
+              if only and key not in only:
+                  continue
+              b = e["build"]
+              legs.append({
+                  "key": key,
+                  "image": e["image"],
+                  "tag": e["tag"],
+                  "context": b["context"],
+                  "dockerfile": b["dockerfile"],
+                  "build_args_from": b.get("build_args_from", ""),
+              })
+          print("matrix=" + json.dumps({"include": legs}))
+          PY
+
+  build:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Log in to ghcr.io
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Load versions.env (comfyui) into build-args if the leg declares one.
+      - name: Assemble build args
+        id: args
+        shell: bash
+        run: |
+          args=""
+          if [[ -n "${{ matrix.build_args_from }}" && -f "${{ matrix.build_args_from }}" ]]; then
+            while IFS= read -r line; do
+              [[ "$line" =~ ^[[:space:]]*# ]] && continue
+              [[ -z "${line// }" ]] && continue
+              kv="${line%%#*}"; kv="${kv//[[:space:]]/}"
+              [[ "$kv" == *=* ]] && args+="${kv}"$'\n'
+            done < "${{ matrix.build_args_from }}"
+          fi
+          {
+            echo "build_args<<EOF"
+            printf '%s' "$args"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Compute tags + labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ matrix.image }}
+          tags: |
+            type=raw,value=${{ matrix.tag }},enable=${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
+            type=ref,event=branch
+            type=ref,event=pr
+          labels: |
+            org.opencontainers.image.title=${{ matrix.key }}
+            org.opencontainers.image.source=https://github.com/Hal0ai/hal0-runner-images
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: ${{ github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.push == true) }}
+          build-args: ${{ steps.args.outputs.build_args }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.key }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.key }}
+          platforms: linux/amd64
+          provenance: false
+
+      - name: Report digest
+        if: steps.build.outputs.digest != ''
+        run: |
+          echo "Pushed ${{ matrix.image }}:${{ matrix.tag }}"
+          echo "Digest ${{ steps.build.outputs.digest }}"
+
+  # After all owned images build on main, resolve digests + open a
+  # manifest-bump PR against Hal0ai/hal0.
+  emit-manifest:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - name: Checkout app repo
+        uses: actions/checkout@v6
+        with:
+          repository: Hal0ai/hal0
+          path: app
+          token: ${{ secrets.HAL0_MANIFEST_PR_TOKEN }}
+      - name: Resolve digests into app manifest
+        run: ./scripts/emit-manifest.sh app/manifest.json
+      - name: Open manifest-bump PR
+        working-directory: app
+        env:
+          GH_TOKEN: ${{ secrets.HAL0_MANIFEST_PR_TOKEN }}
+        run: |
+          if git diff --quiet manifest.json; then
+            echo "no manifest changes"; exit 0
+          fi
+          branch="bot/runner-image-digests-${GITHUB_SHA::7}"
+          git config user.name  "hal0-runner-images-bot"
+          git config user.email "bot@hal0.local"
+          git checkout -b "$branch"
+          git add manifest.json
+          git commit -m "chore(manifest): bump runner image digests"
+          git push -u origin "$branch"
+          gh pr create --fill --base main --head "$branch" \
+            --title "chore(manifest): bump runner image digests" \
+            --body "Automated digest bump from Hal0ai/hal0-runner-images build-matrix."

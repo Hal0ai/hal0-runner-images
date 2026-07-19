@@ -1,0 +1,93 @@
+{
+  "_schema": "hal0.runner-images.v1",
+  "_comment": "Source of truth for hal0 runner images. `owned` images build from a Dockerfile in THIS repo (build.context/dockerfile). `referenced` images build in their own upstream repo (build.source_repo @ build.ref) and are only pinned here — this repo does NOT vendor their source (decision 2026-07-19: reference, don't absorb). scripts/emit-manifest.sh resolves each image's published ghcr digest and PRs it into Hal0ai/hal0 manifest.json under the matching manifest_key. rocmfpx/vulkanfpx use a separate app-side pin (DEFAULT_ROCMFPX_IMAGE, schema.py) rather than manifest.json.toolbox_images.",
+  "images": {
+    "cpu": {
+      "image": "ghcr.io/hal0ai/hal0-toolbox-cpu",
+      "tag": "v1",
+      "manifest_key": "cpu",
+      "ownership": "owned",
+      "build": { "context": "cpu", "dockerfile": "cpu/Dockerfile", "platforms": ["linux/amd64"] },
+      "notes": "llama.cpp CPU/Vulkan fallback. Self-contained (clones llama.cpp in builder)."
+    },
+    "flm": {
+      "image": "ghcr.io/hal0ai/hal0-toolbox-flm",
+      "tag": "0.9.44",
+      "manifest_key": "flm",
+      "ownership": "owned",
+      "build": { "context": "flm", "dockerfile": "flm/Dockerfile", "platforms": ["linux/amd64"] },
+      "notes": "FastFlowLM v0.9.44 on AMD XDNA2 NPU. FLM_REF build-arg controls upstream tag."
+    },
+    "kokoro": {
+      "image": "ghcr.io/hal0ai/hal0-toolbox-kokoro",
+      "tag": "v1",
+      "manifest_key": "kokoro",
+      "ownership": "owned",
+      "build": { "context": "kokoro", "dockerfile": "kokoro/Dockerfile", "platforms": ["linux/amd64"] },
+      "notes": "Kokoro-82M TTS (CPU ONNX). Dockerfile RECONSTRUCTED from image history 2026-07-19 — verify against pinned digest before trusting a rebuild."
+    },
+    "moonshine": {
+      "image": "ghcr.io/hal0ai/hal0-toolbox-moonshine",
+      "tag": "v1",
+      "manifest_key": "moonshine",
+      "ownership": "owned",
+      "build": { "context": "moonshine", "dockerfile": "moonshine/Dockerfile", "platforms": ["linux/amd64"] },
+      "notes": "Moonshine STT (CPU/Vulkan). Dockerfile RECONSTRUCTED from ghcr config blob 2026-07-19 — verify before trusting a rebuild."
+    },
+    "qwen3tts": {
+      "image": "ghcr.io/hal0ai/hal0-toolbox-qwen3tts",
+      "tag": "v1",
+      "manifest_key": "qwen3tts",
+      "ownership": "owned",
+      "build": { "context": "qwen3tts", "dockerfile": "qwen3tts/Dockerfile", "platforms": ["linux/amd64"] },
+      "notes": "Qwen3-TTS multilingual GPU TTS (ROCm). Migrated as-is from app repo packaging/toolbox."
+    },
+    "comfyui": {
+      "image": "ghcr.io/hal0ai/hal0-comfyui",
+      "tag": "latest",
+      "manifest_key": "comfyui",
+      "ownership": "owned",
+      "build": { "context": "comfyui", "dockerfile": "comfyui/Dockerfile", "platforms": ["linux/amd64"], "build_args_from": "comfyui/versions.env" },
+      "notes": "NEW hal0-owned ComfyUI (gfx1151 ROCm). Replaces third-party docker.io/kyuz0/amd-strix-halo-comfyui. Single ROCm image — no vulkan variant (see comfyui/README.md). versions.env *_REF still floating: not release-ready until pinned to SHAs."
+    },
+    "vulkan": {
+      "image": "ghcr.io/hal0ai/hal0-toolbox-vulkan",
+      "tag": "v1",
+      "manifest_key": "vulkan",
+      "ownership": "referenced",
+      "build": {
+        "source_repo": "https://github.com/Hal0ai/amd-strix-halo-toolboxes",
+        "ref": "main",
+        "dockerfile": "toolboxes/Dockerfile.vulkan-radv"
+      },
+      "notes": "llama.cpp Vulkan backend (default Strix Halo iGPU). Built + published by amd-strix-halo-toolboxes' own CI (.github/workflows/build_and_publish.yml). NOT vendored here — pin only."
+    },
+    "rocm": {
+      "image": "ghcr.io/hal0ai/hal0-toolbox-rocm",
+      "tag": "v1",
+      "manifest_key": "rocm",
+      "ownership": "referenced",
+      "build": {
+        "source_repo": "https://github.com/Hal0ai/amd-strix-halo-toolboxes",
+        "ref": "main",
+        "dockerfile": "toolboxes/Dockerfile.rocm-7.2.4"
+      },
+      "notes": "llama.cpp ROCm backend, multi-arch gfx1030..gfx1151. Built by amd-strix-halo-toolboxes CI. NOT vendored here."
+    },
+    "rocmfpx": {
+      "image": "ghcr.io/hal0ai/hal0-rocmfpx",
+      "tag": "c077206",
+      "manifest_key": null,
+      "app_pin": "DEFAULT_ROCMFPX_IMAGE (src/hal0/config/schema.py)",
+      "ownership": "referenced",
+      "build": {
+        "source_repo": "https://github.com/Hal0ai/Hal0_ROCmFPX",
+        "ref": "c0772068e0a033da769cf4cca3d1cc4436edc727",
+        "dockerfile": ".devops/strix-rocmfp4.Dockerfile",
+        "build_script": "scripts/build-strix-rocmfp4-mtp.sh",
+        "builder_base": "ghcr.io/hal0ai/amd-strix-halo-toolboxes:rocm-7.2.4-rocmfp4-server"
+      },
+      "notes": "FPX llama.cpp fork (the primary LLM runner on the boxes). Owned GH fork Hal0ai/Hal0_ROCmFPX; tag c077206 = commit c0772068. NOT vendored — pinned via app-side DEFAULT_ROCMFPX_IMAGE, not manifest.json. Builder base comes from amd-strix-halo-toolboxes."
+    }
+  }
+}
