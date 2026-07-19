@@ -16,6 +16,25 @@ hal0-owned; most just wasn't in the app repo.
 | vulkan | vulkan | `Hal0ai/amd-strix-halo-toolboxes` `toolboxes/Dockerfile.vulkan-radv` (own CI) | referenced, not vendored |
 | rocm | rocm | `Hal0ai/amd-strix-halo-toolboxes` `toolboxes/Dockerfile.rocm-7.2.4` (own CI) | referenced |
 | rocmfpx/vulkanfpx | — (DEFAULT_ROCMFPX_IMAGE) | `Hal0ai/Hal0_ROCmFPX` `.devops/strix-rocmfp4.Dockerfile` @ `c0772068…` (tag c077206) | referenced; app-side pin |
+| rocmfpx-hy3 | — (profile.hy3-fpx) | `Hal0ai/Hal0_ROCmFPX` `.devops/strix-rocmfp4.Dockerfile` @ `d7e1f26`, builder `localhost/hal0-rocmfpx-builder:7.2.4` | referenced; digest-pinned |
+
+## rocmfpx-hy3 — rescued from local-only (2026-07-19)
+
+The Hy3 FPX runner (`ghcr.io/hal0ai/hal0-rocmfpx:ifp2-hyv3-{mtp,d7e1f26}`) was
+built 2026-07-14 on CT105 and existed **only in 105's local podman store** — not
+on ghcr. Verified missing from the remote (`tags/list` had c077206, 5b39566,
+7aa484a, server, vulkan-minicpm5 — no hyv3), then pushed off-box 2026-07-19.
+
+- Manifest digest (both tags): `sha256:dbb443fc888a94f517b01de8200520ac4562459c39e67ccff1626aaa3f0d5f00`
+- Config / image id: `57aaafb773b1`, 7.53 GB.
+- Recipe: IFP2 (ggml type107) + minicpm5 + hy_v3 NextN/MTP patch, so
+  Hy3-Chadrock-FPX-IFP2-MTP loads. Source `Hal0_ROCmFPX @ d7e1f26`; builder
+  toolchain `localhost/hal0-rocmfpx-builder:7.2.4` (rebuild recipe — push it to
+  ghcr too if you want that preserved).
+- App follow-up: `[profile.hy3-fpx]` in `/etc/hal0/profiles.toml` references the
+  floating `:ifp2-hyv3-mtp` tag — repin to `:ifp2-hyv3-d7e1f26` (or the digest)
+  for reproducibility. hy3 slot is `enabled=false` (91 GB weights can't
+  co-reside with the agent slot on 128 GB).
 
 ## Handoff corrections
 

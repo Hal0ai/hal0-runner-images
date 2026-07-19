@@ -88,6 +88,22 @@
         "builder_base": "ghcr.io/hal0ai/amd-strix-halo-toolboxes:rocm-7.2.4-rocmfp4-server"
       },
       "notes": "FPX llama.cpp fork (the primary LLM runner on the boxes). Owned GH fork Hal0ai/Hal0_ROCmFPX; tag c077206 = commit c0772068. NOT vendored — pinned via app-side DEFAULT_ROCMFPX_IMAGE, not manifest.json. Builder base comes from amd-strix-halo-toolboxes."
+    },
+    "rocmfpx-hy3": {
+      "image": "ghcr.io/hal0ai/hal0-rocmfpx",
+      "tag": "ifp2-hyv3-d7e1f26",
+      "digest": "sha256:dbb443fc888a94f517b01de8200520ac4562459c39e67ccff1626aaa3f0d5f00",
+      "manifest_key": null,
+      "app_pin": "[profile.hy3-fpx] in /etc/hal0/profiles.toml (host-side; not in this repo)",
+      "ownership": "referenced",
+      "build": {
+        "source_repo": "https://github.com/Hal0ai/Hal0_ROCmFPX",
+        "ref": "d7e1f26",
+        "dockerfile": ".devops/strix-rocmfp4.Dockerfile",
+        "build_script": "scripts/build-strix-rocmfp4-mtp.sh",
+        "builder_base": "localhost/hal0-rocmfpx-builder:7.2.4"
+      },
+      "notes": "Hy3 variant of the FPX runner: adds IFP2 (ggml type107) + minicpm5 + the hy_v3 NextN/MTP patch so Hy3-Chadrock-FPX-IFP2-MTP loads. Built 2026-07-14 on CT105; was local-only until pushed to ghcr 2026-07-19. Both floating tag :ifp2-hyv3-mtp and digest-named :ifp2-hyv3-d7e1f26 share manifest sha256:dbb443fc… (config/image id 57aaafb773b1). Builder toolchain localhost/hal0-rocmfpx-builder:7.2.4 (may or may not be pushed). Referenced, digest-pinned; app follow-up: repin [profile.hy3-fpx] from :ifp2-hyv3-mtp to the digest. hy3 slot enabled=false (91GB weights can't co-reside with agent slot on 128GB)."
     }
   }
 }
