@@ -27,11 +27,17 @@ Corollary for the app: the `comfyui` runner's `backend=None` in
 - Redistributing an image built from ComfyUI is a GPL-3.0 derivative work —
   publish under that license.
 
-## Before first release build
+## Reproducibility status
 
-`versions.env` still has floating branch names (`master`/`main`) for ComfyUI
-and the three custom nodes. Resolve each to a commit SHA — otherwise the image
-is not reproducible (the exact defect being fixed vs kyuz0).
+All build inputs are pinned (2026-07-19): the fedora base by digest, the
+PyTorch triple by dated nightly, and ComfyUI + all three custom nodes by
+commit SHA (see `versions.env`). No floating tags remain. Before a release,
+re-resolve to current SHAs if a newer ComfyUI/node/base is wanted — the pin is
+the baseline, not a freeze.
+
+Remaining pre-publish work: build the image on a host and smoke-test
+(`assert 'rocm' in torch.__version__` + a `/system_stats` hit) before pushing
+`:latest` and pinning its digest in the app manifest.
 
 ## Build
 

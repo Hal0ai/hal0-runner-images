@@ -28,7 +28,11 @@
 # The *_REF ARGs MUST be resolved to real commit SHAs before a release build —
 # leaving them at main/master reintroduces the floating-HEAD problem this fixes.
 
-FROM registry.fedoraproject.org/fedora:rawhide
+# Digest-pinned base (fedora:rawhide is a moving tag). Overridable via
+# --build-arg FEDORA_BASE=... from versions.env; default is the pin resolved
+# 2026-07-19.
+ARG FEDORA_BASE=registry.fedoraproject.org/fedora@sha256:7c96770c3676e4e61a3c0e258f7488c1ac723557ff4c10a24a0125ae330d0e10
+FROM ${FEDORA_BASE}
 
 RUN dnf -y install --setopt=install_weak_deps=False --nodocs \
         libdrm-devel python3.13 python3.13-devel git rsync libatomic \
@@ -59,16 +63,16 @@ RUN python -m pip install --index-url ${ROCM_INDEX} \
 RUN python -c "import torch; print('Torch:', torch.__version__); assert 'rocm' in torch.__version__, 'FATAL: non-ROCm torch installed'"
 
 # --- ComfyUI, pinned to a commit for reproducibility ---
-ARG COMFYUI_REF=master
+ARG COMFYUI_REF=c9602625e445e9ee37d3ac6faf5ea9ec1e0de87e
 RUN git clone https://github.com/comfyanonymous/ComfyUI.git /opt/ComfyUI \
     && cd /opt/ComfyUI && git checkout ${COMFYUI_REF}
 WORKDIR /opt/ComfyUI
 RUN python -m pip install -r requirements.txt
 
 # --- custom_nodes: pinned commits, matching hal0's dependency set ---
-ARG ESSENTIALS_REF=main
-ARG AMDGPUMONITOR_REF=main
-ARG GGUF_REF=main
+ARG ESSENTIALS_REF=9d9f4bedfc9f0321c19faf71855e228c93bd0dc9
+ARG AMDGPUMONITOR_REF=0c584ed28ed3678d96f631a6eff91be397c0baa4
+ARG GGUF_REF=6ea2651e7df66d7585f6ffee804b20e92fb38b8a
 RUN git clone https://github.com/cubiq/ComfyUI_essentials /opt/ComfyUI/custom_nodes/ComfyUI_essentials \
     && cd /opt/ComfyUI/custom_nodes/ComfyUI_essentials && git checkout ${ESSENTIALS_REF}
 RUN git clone https://github.com/kyuz0/ComfyUI-AMDGPUMonitor /opt/ComfyUI/custom_nodes/ComfyUI-AMDGPUMonitor \

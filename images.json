@@ -48,7 +48,7 @@
       "manifest_key": "comfyui",
       "ownership": "owned",
       "build": { "context": "comfyui", "dockerfile": "comfyui/Dockerfile", "platforms": ["linux/amd64"], "build_args_from": "comfyui/versions.env" },
-      "notes": "NEW hal0-owned ComfyUI (gfx1151 ROCm). Replaces third-party docker.io/kyuz0/amd-strix-halo-comfyui. Single ROCm image — no vulkan variant (see comfyui/README.md). versions.env *_REF still floating: not release-ready until pinned to SHAs."
+      "notes": "NEW hal0-owned ComfyUI (gfx1151 ROCm). Replaces third-party docker.io/kyuz0/amd-strix-halo-comfyui. Single ROCm image — no vulkan variant (see comfyui/README.md). All build inputs pinned 2026-07-19: fedora base by digest, torch triple by dated nightly, ComfyUI + 3 nodes by commit SHA. Remaining before publish: build + smoke-test, then digest-pin in app manifest."
     },
     "vulkan": {
       "image": "ghcr.io/hal0ai/hal0-toolbox-vulkan",
