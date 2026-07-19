@@ -9,8 +9,11 @@ name: Build runner images
 # still pins their published digests.
 #
 # Migrated from the app repo's .github/workflows/toolbox.yml (which only built
-# qwen3tts). Model: one matrix leg per owned image; linux/amd64; GitHub-hosted
-# runner is fine (build only pulls base layers + pip/dnf — no GPU needed).
+# qwen3tts). Model: one matrix leg per image with publish=="ci" in images.json
+# (today only comfyui; future new owned images e.g. vibevoice). linux/amd64;
+# GitHub-hosted runner is fine (build only pulls base layers + pip/dnf).
+# publish=="external"/"manual" images are NEVER built here — only their
+# published digests are pinned by scripts/emit-manifest.sh.
 #
 # DISPATCH-ONLY by design. There is NO push/PR auto-trigger: a metadata edit
 # (images.json, a doc) must not rebuild + re-push every runner image, and most
@@ -24,7 +27,7 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: "Comma-separated image keys to build (blank = all owned — rarely what you want)"
+        description: "Comma-separated image keys to build (blank = all publish:ci images, currently just comfyui)"
         type: string
         default: "comfyui"
       push:
@@ -62,7 +65,12 @@ jobs:
           doc = json.load(open("images.json"))
           legs = []
           for key, e in doc["images"].items():
-              if e.get("ownership") != "owned":
+              # Build ONLY images this repo is the publisher of. 'external'
+              # (archived-here-published-elsewhere) and 'manual' (referenced)
+              # must not rebuild/repush — they'd 403 on pre-existing org
+              # packages and/or overwrite the canonical artifact. Their digests
+              # are still pinned by emit-manifest.sh. See images.json _comment.
+              if e.get("publish") != "ci":
                   continue
               if only and key not in only:
                   continue

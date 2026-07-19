@@ -1,12 +1,13 @@
 {
   "_schema": "hal0.runner-images.v1",
-  "_comment": "Source of truth for hal0 runner images. `owned` images build from a Dockerfile in THIS repo (build.context/dockerfile). `referenced` images build in their own upstream repo (build.source_repo @ build.ref) and are only pinned here — this repo does NOT vendor their source (decision 2026-07-19: reference, don't absorb). scripts/emit-manifest.sh resolves each image's published ghcr digest and PRs it into Hal0ai/hal0 manifest.json under the matching manifest_key. rocmfpx/vulkanfpx use a separate app-side pin (DEFAULT_ROCMFPX_IMAGE, schema.py) rather than manifest.json.toolbox_images.",
+  "_comment": "Source of truth for hal0 runner images. TWO orthogonal axes: (1) `ownership` = does the Dockerfile live in THIS repo (owned) or in an upstream repo we only pin (referenced); (2) `publish` = who builds+pushes the canonical image. publish values: 'ci' = THIS repo's build-matrix.yml builds+pushes it (only comfyui today; future new owned images e.g. vibevoice); 'external' = Dockerfile is archived here for provenance/reproducibility, but the canonical published image comes from another lineage — CI must NOT rebuild/repush it (would 403 on the pre-existing org package and/or overwrite the canonical artifact), we only pin its digest; 'manual' = referenced source repo builds it, pin only. The plan job builds ONLY publish=='ci'. scripts/emit-manifest.sh resolves the published ghcr digest for EVERY image with a manifest_key and PRs it into Hal0ai/hal0 manifest.json — independent of publish. rocmfpx/vulkanfpx use an app-side pin (DEFAULT_ROCMFPX_IMAGE, schema.py) rather than manifest.json.toolbox_images.",
   "images": {
     "cpu": {
       "image": "ghcr.io/hal0ai/hal0-toolbox-cpu",
       "tag": "v1",
       "manifest_key": "cpu",
       "ownership": "owned",
+      "publish": "external",
       "build": { "context": "cpu", "dockerfile": "cpu/Dockerfile", "platforms": ["linux/amd64"] },
       "notes": "llama.cpp CPU/Vulkan fallback. Self-contained (clones llama.cpp in builder)."
     },
@@ -15,6 +16,7 @@
       "tag": "0.9.44",
       "manifest_key": "flm",
       "ownership": "owned",
+      "publish": "external",
       "build": { "context": "flm", "dockerfile": "flm/Dockerfile", "platforms": ["linux/amd64"] },
       "notes": "FastFlowLM v0.9.44 on AMD XDNA2 NPU. FLM_REF build-arg controls upstream tag."
     },
@@ -23,6 +25,7 @@
       "tag": "v1",
       "manifest_key": "kokoro",
       "ownership": "owned",
+      "publish": "external",
       "build": { "context": "kokoro", "dockerfile": "kokoro/Dockerfile", "platforms": ["linux/amd64"] },
       "notes": "Kokoro-82M TTS (CPU ONNX). Dockerfile RECONSTRUCTED from image history 2026-07-19; rebuild-VERIFIED same day (built clean + container serves, /health 200 model_loaded=true, 54 voices, default af_bella)."
     },
@@ -31,6 +34,7 @@
       "tag": "v1",
       "manifest_key": "moonshine",
       "ownership": "owned",
+      "publish": "external",
       "build": { "context": "moonshine", "dockerfile": "moonshine/Dockerfile", "platforms": ["linux/amd64"] },
       "notes": "Moonshine STT (CPU/Vulkan). Dockerfile RECONSTRUCTED from ghcr config blob 2026-07-19; rebuild-VERIFIED same day (built clean + container serves, /health 200 model_loaded=true, model_id moonshine-small_streaming-en)."
     },
@@ -39,6 +43,7 @@
       "tag": "v1",
       "manifest_key": "qwen3tts",
       "ownership": "owned",
+      "publish": "external",
       "build": { "context": "qwen3tts", "dockerfile": "qwen3tts/Dockerfile", "platforms": ["linux/amd64"] },
       "notes": "Qwen3-TTS multilingual GPU TTS (ROCm). Migrated as-is from app repo packaging/toolbox."
     },
@@ -49,6 +54,7 @@
       "published": "2026-07-19 (tags: main, latest; anonymously pullable)",
       "manifest_key": "comfyui",
       "ownership": "owned",
+      "publish": "ci",
       "build": { "context": "comfyui", "dockerfile": "comfyui/Dockerfile", "platforms": ["linux/amd64"], "build_args_from": "comfyui/versions.env" },
       "notes": "NEW hal0-owned ComfyUI (gfx1151 ROCm). Replaces third-party docker.io/kyuz0/amd-strix-halo-comfyui. Single ROCm image — no vulkan variant (see comfyui/README.md). All build inputs pinned 2026-07-19: fedora base by digest, torch triple by dated nightly (cp313 @ 20260501), ComfyUI + 3 nodes by commit SHA. SMOKE-TESTED on gfx1151 (143): builds, ROCm torch sees Radeon 8060S; ComfyUI 0.28.0 detects Total VRAM 118784 MB (~116 GiB GTT, native, NORMAL_VRAM) + gfx1151 + ROCm 7.13. Remaining before publish: push :latest + digest-pin in app manifest."
     },
@@ -57,6 +63,7 @@
       "tag": "v1",
       "manifest_key": "vulkan",
       "ownership": "referenced",
+      "publish": "manual",
       "build": {
         "source_repo": "https://github.com/Hal0ai/amd-strix-halo-toolboxes",
         "ref": "main",
@@ -69,6 +76,7 @@
       "tag": "v1",
       "manifest_key": "rocm",
       "ownership": "referenced",
+      "publish": "manual",
       "build": {
         "source_repo": "https://github.com/Hal0ai/amd-strix-halo-toolboxes",
         "ref": "main",
@@ -82,6 +90,7 @@
       "manifest_key": null,
       "app_pin": "DEFAULT_ROCMFPX_IMAGE (src/hal0/config/schema.py)",
       "ownership": "referenced",
+      "publish": "manual",
       "build": {
         "source_repo": "https://github.com/Hal0ai/Hal0_ROCmFPX",
         "ref": "c0772068e0a033da769cf4cca3d1cc4436edc727",
@@ -98,6 +107,7 @@
       "manifest_key": null,
       "app_pin": "[profile.hy3-fpx] in /etc/hal0/profiles.toml (host-side; not in this repo)",
       "ownership": "referenced",
+      "publish": "manual",
       "build": {
         "source_repo": "https://github.com/Hal0ai/Hal0_ROCmFPX",
         "ref": "d7e1f26",
