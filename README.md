@@ -29,7 +29,8 @@ moonshine/ qwen3tts/
 comfyui/                     NEW hal0-owned ComfyUI (gfx1151 ROCm) + versions.env
 external/README.md           referenced sources (not vendored) + how to bump
 scripts/emit-manifest.sh     resolve ghcr digests → patch app manifest.json
-.github/workflows/build-matrix.yml   per-owned-image build/push → emit → bump PR
+.github/workflows/build-matrix.yml   build+push publish:ci images (comfyui) — BUILD ONLY
+.github/workflows/pin-digests.yml    resolve published digests → bump-PR app manifest (BUILD-FREE)
 docs/PROVENANCE.md           where every source really lives (handoff corrections)
 docs/WIRING.md               how the app consumes these images
 docs/comfyui-research-2026-07-19.md   ComfyUI fork survey + decision
@@ -43,8 +44,8 @@ docs/comfyui-research-2026-07-19.md   ComfyUI fork survey + decision
 - **comfyui** is a drafted, hal0-owned single ROCm image replacing third-party
   kyuz0. `comfyui/versions.env` `*_REF` values are still floating branch names
   — pin to commit SHAs before a release build.
-- `build-matrix.yml`'s manifest-bump job needs a `HAL0_MANIFEST_PR_TOKEN`
-  secret (PR-scoped to Hal0ai/hal0). Referenced images build in their own
-  repos; only their digests are re-pinned here.
+- `pin-digests.yml` (the manifest bump) needs the `HAL0_MANIFEST_PR_TOKEN`
+  secret (Contents+PR write on Hal0ai/hal0) — already set. Referenced/external
+  images build in their own repos; only their digests are re-pinned here.
 
 See `docs/PROVENANCE.md` for the full corrected inventory.

@@ -1,0 +1,72 @@
+name: Pin runner image digests
+
+# Resolve the published ghcr digest of every runner image in images.json (that
+# has a manifest_key) and open a bump PR against Hal0ai/hal0's manifest.json.
+#
+# This is BUILD-FREE — it never builds or pushes anything. Pinning is the
+# frequent op (any time a referenced/external image republishes), and it
+# shouldn't require a build run. Decoupled from build-matrix.yml on purpose:
+#   build-matrix.yml -> builds + pushes publish:ci images (comfyui)
+#   pin-digests.yml  -> resolves published digests -> PRs the manifest bump
+#
+# Requires the HAL0_MANIFEST_PR_TOKEN secret (Contents + Pull requests: write
+# on Hal0ai/hal0).
+
+on:
+  workflow_dispatch:
+    inputs:
+      open_pr:
+        description: "Open a bump PR against Hal0ai/hal0 (false = resolve + print diff only)"
+        type: boolean
+        default: true
+  # Optional: uncomment to refresh weekly. Note this auto-opens PRs.
+  # schedule:
+  #   - cron: "17 6 * * 1"
+
+concurrency:
+  group: pin-digests
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  pin:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout images repo
+        uses: actions/checkout@v6
+
+      - name: Checkout app repo (Hal0ai/hal0)
+        uses: actions/checkout@v6
+        with:
+          repository: Hal0ai/hal0
+          path: app
+          token: ${{ secrets.HAL0_MANIFEST_PR_TOKEN }}
+
+      - name: Resolve published digests into app manifest
+        run: ./scripts/emit-manifest.sh app/manifest.json
+
+      - name: Show diff
+        working-directory: app
+        run: git --no-pager diff manifest.json || true
+
+      - name: Open manifest-bump PR
+        if: ${{ inputs.open_pr }}
+        working-directory: app
+        env:
+          GH_TOKEN: ${{ secrets.HAL0_MANIFEST_PR_TOKEN }}
+        run: |
+          if git diff --quiet manifest.json; then
+            echo "no manifest changes — nothing to PR"; exit 0
+          fi
+          branch="bot/runner-image-digests-${GITHUB_RUN_ID}"
+          git config user.name  "hal0-runner-images-bot"
+          git config user.email "bot@hal0.local"
+          git checkout -b "$branch"
+          git add manifest.json
+          git commit -m "chore(manifest): bump runner image digests"
+          git push -u origin "$branch"
+          gh pr create --fill --base main --head "$branch" \
+            --title "chore(manifest): bump runner image digests" \
+            --body "Automated digest bump from Hal0ai/hal0-runner-images (pin-digests). Resolves published ghcr digests for every manifest_key image in images.json."

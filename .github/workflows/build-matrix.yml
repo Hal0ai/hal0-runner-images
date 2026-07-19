@@ -1,12 +1,9 @@
 name: Build runner images
 
-# Build + push the OWNED hal0 runner images (those with a Dockerfile in this
-# repo) to ghcr.io/hal0ai/, then emit their published digests for a
-# manifest-bump PR against Hal0ai/hal0.
-#
-# `referenced` images (vulkan, rocm, rocmfpx — see images.json) are built by
-# their own source repos' CI and are NOT built here; scripts/emit-manifest.sh
-# still pins their published digests.
+# Build + push the publish:ci hal0 runner images to ghcr.io/hal0ai/.
+# BUILD ONLY — pinning the app manifest is a separate, build-free workflow
+# (pin-digests.yml). Referenced/external images are built elsewhere and are
+# never built here; pin-digests.yml still pins their published digests.
 #
 # Migrated from the app repo's .github/workflows/toolbox.yml (which only built
 # qwen3tts). Model: one matrix leg per image with publish=="ci" in images.json
@@ -34,10 +31,6 @@ on:
         description: "Push to ghcr.io (true) or build-only dry-run (false)"
         type: boolean
         default: true
-      open_manifest_pr:
-        description: "After push, resolve digests + open a manifest-bump PR against Hal0ai/hal0"
-        type: boolean
-        default: false
 
 concurrency:
   group: build-${{ github.ref }}
@@ -159,40 +152,4 @@ jobs:
         run: |
           echo "Pushed ${{ matrix.image }}:${{ matrix.tag }}"
           echo "Digest ${{ steps.build.outputs.digest }}"
-
-  # After all owned images build on main, resolve digests + open a
-  # manifest-bump PR against Hal0ai/hal0.
-  emit-manifest:
-    needs: build
-    if: inputs.open_manifest_pr && inputs.push
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v6
-      - name: Checkout app repo
-        uses: actions/checkout@v6
-        with:
-          repository: Hal0ai/hal0
-          path: app
-          token: ${{ secrets.HAL0_MANIFEST_PR_TOKEN }}
-      - name: Resolve digests into app manifest
-        run: ./scripts/emit-manifest.sh app/manifest.json
-      - name: Open manifest-bump PR
-        working-directory: app
-        env:
-          GH_TOKEN: ${{ secrets.HAL0_MANIFEST_PR_TOKEN }}
-        run: |
-          if git diff --quiet manifest.json; then
-            echo "no manifest changes"; exit 0
-          fi
-          branch="bot/runner-image-digests-${GITHUB_SHA::7}"
-          git config user.name  "hal0-runner-images-bot"
-          git config user.email "bot@hal0.local"
-          git checkout -b "$branch"
-          git add manifest.json
-          git commit -m "chore(manifest): bump runner image digests"
-          git push -u origin "$branch"
-          gh pr create --fill --base main --head "$branch" \
-            --title "chore(manifest): bump runner image digests" \
-            --body "Automated digest bump from Hal0ai/hal0-runner-images build-matrix."
+          echo "To pin it into the app manifest, run the 'Pin runner image digests' workflow."
