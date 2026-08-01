@@ -49,7 +49,8 @@ list_images() {
     python3 - "${IMAGES_JSON}" <<'PY'
 import json, sys
 doc = json.load(open(sys.argv[1]))
-for key, e in (doc.get("images") or {}).items():
+for e in (doc.get("images") or []):
+    key = e.get("id", "?")
     mk = e.get("manifest_key")
     ref = f'{e.get("image","")}:{e.get("tag","")}'
     if mk:

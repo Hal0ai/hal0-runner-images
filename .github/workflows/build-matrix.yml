@@ -57,7 +57,8 @@ jobs:
           only = {s.strip() for s in (sys.argv[1] or "").split(",") if s.strip()}
           doc = json.load(open("images.json"))
           legs = []
-          for key, e in doc["images"].items():
+          for e in doc["images"]:
+              key = e["id"]
               # Build ONLY images this repo is the publisher of. 'external'
               # (archived-here-published-elsewhere) and 'manual' (referenced)
               # must not rebuild/repush — they'd 403 on pre-existing org

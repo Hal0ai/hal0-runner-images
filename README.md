@@ -20,6 +20,14 @@ The app keeps consuming `manifest.json`; this repo's CI resolves published
 ghcr digests (`scripts/emit-manifest.sh`) and opens a manifest-bump PR against
 the app. The app resolver is unchanged — see `docs/WIRING.md`.
 
+The app's dashboard **Runner Images** page also consumes `images.json`
+directly: its sync fetches
+`raw.githubusercontent.com/Hal0ai/hal0-runner-images/main/images.json`
+(schema `hal0.runner-images.v1`: top-level `schema` string + `images`
+**array**, each entry keyed by `id`) and probes ghcr anonymously for
+tag/digest/size. Keep that shape stable — the app degrades to
+GHCR-only rows when the file fails to parse.
+
 ## Layout
 
 ```
