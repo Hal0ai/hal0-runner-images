@@ -132,19 +132,20 @@
     {
       "id": "rocmfpx",
       "image": "ghcr.io/hal0ai/hal0-rocmfpx",
-      "tag": "c077206",
+      "tag": "ade07ba",
+      "digest": "sha256:755e09d4b42547a7dc38c9d4ea485e73cef7daab7bc7db1315a5095f9a8c8cac",
       "manifest_key": null,
       "app_pin": "DEFAULT_ROCMFPX_IMAGE (src/hal0/config/schema.py)",
       "ownership": "referenced",
       "publish": "manual",
       "build": {
         "source_repo": "https://github.com/Hal0ai/Hal0_ROCmFPX",
-        "ref": "c0772068e0a033da769cf4cca3d1cc4436edc727",
+        "ref": "ade07baee4bface18ce9c3915b1e029cf26bb61a",
         "dockerfile": ".devops/strix-rocmfp4.Dockerfile",
         "build_script": "scripts/build-strix-rocmfp4-mtp.sh",
         "builder_base": "ghcr.io/hal0ai/amd-strix-halo-toolboxes:rocm-7.2.4-rocmfp4-server"
       },
-      "notes": "FPX llama.cpp fork (the primary LLM runner on the boxes). Owned GH fork Hal0ai/Hal0_ROCmFPX; tag c077206 = commit c0772068. NOT vendored — pinned via app-side DEFAULT_ROCMFPX_IMAGE, not manifest.json. Builder base comes from amd-strix-halo-toolboxes."
+      "notes": "FPX llama.cpp fork (the primary LLM runner on the boxes). Owned GH fork Hal0ai/Hal0_ROCmFPX; tag ade07ba = commit ade07bae (llama.cpp b10297 sync + vulkan dmmv restore + MiniCPM5 native tool-call parser) — the app default since hal0#1627. NOT vendored — pinned via app-side DEFAULT_ROCMFPX_IMAGE, not manifest.json. Builder base comes from amd-strix-halo-toolboxes."
     },
     {
       "id": "rocmfpx-hy3",
