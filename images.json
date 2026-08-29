@@ -1,6 +1,6 @@
 {
   "schema": "hal0.runner-images.v1",
-  "_comment": "Source of truth for hal0 runner images. TWO orthogonal axes: (1) `ownership` = does the Dockerfile live in THIS repo (owned) or in an upstream repo we only pin (referenced); (2) `publish` = who builds+pushes the canonical image. publish values: 'ci' = THIS repo's build-matrix.yml builds+pushes it (only comfyui today; future new owned images e.g. vibevoice); 'external' = Dockerfile is archived here for provenance/reproducibility, but the canonical published image comes from another lineage — CI must NOT rebuild/repush it (would 403 on the pre-existing org package and/or overwrite the canonical artifact), we only pin its digest; 'manual' = referenced source repo builds it, pin only. The plan job builds ONLY publish=='ci'. scripts/emit-manifest.sh resolves the published ghcr digest for EVERY image with a manifest_key and PRs it into Hal0ai/hal0 manifest.json — independent of publish. rocmfpx/vulkanfpx use an app-side pin (DEFAULT_ROCMFPX_IMAGE, schema.py) rather than manifest.json.toolbox_images. SCHEMA NOTE: `images` is an ARRAY (hal0's runner-image sync — src/hal0/registry/runner_image_sync.py — requires a list); each entry carries its short name in `id`.",
+  "_comment": "Source of truth for hal0 runner images. TWO orthogonal axes: (1) `ownership` = does the Dockerfile live in THIS repo (owned) or in an upstream repo we only pin (referenced); (2) `publish` = who builds+pushes the canonical image. publish values: 'ci' = THIS repo's build-matrix.yml builds+pushes it (only comfyui today; future new owned images e.g. vibevoice); 'external' = Dockerfile is archived here for provenance/reproducibility, but the canonical published image comes from another lineage \u2014 CI must NOT rebuild/repush it (would 403 on the pre-existing org package and/or overwrite the canonical artifact), we only pin its digest; 'manual' = referenced source repo builds it, pin only. The plan job builds ONLY publish=='ci'. scripts/emit-manifest.sh resolves the published ghcr digest for EVERY image with a manifest_key and PRs it into Hal0ai/hal0 manifest.json \u2014 independent of publish. rocmfpx/vulkanfpx use an app-side pin (DEFAULT_ROCMFPX_IMAGE, schema.py) rather than manifest.json.toolbox_images. SCHEMA NOTE: `images` is an ARRAY (hal0's runner-image sync \u2014 src/hal0/registry/runner_image_sync.py \u2014 requires a list); each entry carries its short name in `id`.",
   "images": [
     {
       "id": "cpu",
@@ -99,7 +99,7 @@
         ],
         "build_args_from": "comfyui/versions.env"
       },
-      "notes": "NEW hal0-owned ComfyUI (gfx1151 ROCm). Replaces third-party docker.io/kyuz0/amd-strix-halo-comfyui. Single ROCm image — no vulkan variant (see comfyui/README.md). All build inputs pinned 2026-07-19: fedora base by digest, torch triple by dated nightly (cp313 @ 20260501), ComfyUI + 3 nodes by commit SHA. SMOKE-TESTED on gfx1151 (143): builds, ROCm torch sees Radeon 8060S; ComfyUI 0.28.0 detects Total VRAM 118784 MB (~116 GiB GTT, native, NORMAL_VRAM) + gfx1151 + ROCm 7.13. Remaining before publish: push :latest + digest-pin in app manifest."
+      "notes": "NEW hal0-owned ComfyUI (gfx1151 ROCm). Replaces third-party docker.io/kyuz0/amd-strix-halo-comfyui. Single ROCm image \u2014 no vulkan variant (see comfyui/README.md). All build inputs pinned 2026-07-19: fedora base by digest, torch triple by dated nightly (cp313 @ 20260501), ComfyUI + 3 nodes by commit SHA. SMOKE-TESTED on gfx1151 (143): builds, ROCm torch sees Radeon 8060S; ComfyUI 0.28.0 detects Total VRAM 118784 MB (~116 GiB GTT, native, NORMAL_VRAM) + gfx1151 + ROCm 7.13. Remaining before publish: push :latest + digest-pin in app manifest."
     },
     {
       "id": "vulkan",
@@ -113,7 +113,7 @@
         "ref": "main",
         "dockerfile": "toolboxes/Dockerfile.vulkan-radv"
       },
-      "notes": "llama.cpp Vulkan backend (default Strix Halo iGPU). Built + published by amd-strix-halo-toolboxes' own CI (.github/workflows/build_and_publish.yml). NOT vendored here — pin only."
+      "notes": "llama.cpp Vulkan backend (default Strix Halo iGPU). Built + published by amd-strix-halo-toolboxes' own CI (.github/workflows/build_and_publish.yml). NOT vendored here \u2014 pin only."
     },
     {
       "id": "rocm",
@@ -137,6 +137,13 @@
       "notes": "Canonical ROCmFPX+Vulkan combined runner (llama-server). Built from Hal0ai/hal0 packaging/runner/rocmfpx/build.sh; tag pinned app-side (DEFAULT_ROCMFPX_IMAGE). No pinned tag here on purpose: the hal0 catalogue tracks tags/list so fresh pushes surface on sync."
     },
     {
+      "id": "combined-upstream",
+      "image": "ghcr.io/hal0ai/hal0-combined-upstream",
+      "ownership": "owned",
+      "publish": "external",
+      "notes": "Pristine-upstream llama.cpp variant of the combined runner (adds qwen4exp / Qwen3.8-Flash-Next; lacks ROCmFPX quant formats and the MiniCPM5/LFM2.5 patches). Built from Hal0ai/hal0 packaging/runner/upstream/build.sh; wire to slots ONLY via per-slot image_pin, never as the default. Temporary: retire per Hal0ai/hal0#2118 once ROCmFPX syncs qwen4exp."
+    },
+    {
       "id": "rocmfpx-hy3",
       "image": "ghcr.io/hal0ai/hal0-rocmfpx",
       "tag": "ifp2-hyv3-d7e1f26",
@@ -152,7 +159,7 @@
         "build_script": "scripts/build-strix-rocmfp4-mtp.sh",
         "builder_base": "localhost/hal0-rocmfpx-builder:7.2.4"
       },
-      "notes": "Hy3 variant of the FPX runner: adds IFP2 (ggml type107) + minicpm5 + the hy_v3 NextN/MTP patch so Hy3-Chadrock-FPX-IFP2-MTP loads. Built 2026-07-14 on CT105; was local-only until pushed to ghcr 2026-07-19. Both floating tag :ifp2-hyv3-mtp and digest-named :ifp2-hyv3-d7e1f26 share manifest sha256:dbb443fc… (config/image id 57aaafb773b1). Builder toolchain localhost/hal0-rocmfpx-builder:7.2.4 (may or may not be pushed). Referenced, digest-pinned; app follow-up: repin [profile.hy3-fpx] from :ifp2-hyv3-mtp to the digest. hy3 slot enabled=false (91GB weights can't co-reside with agent slot on 128GB)."
+      "notes": "Hy3 variant of the FPX runner: adds IFP2 (ggml type107) + minicpm5 + the hy_v3 NextN/MTP patch so Hy3-Chadrock-FPX-IFP2-MTP loads. Built 2026-07-14 on CT105; was local-only until pushed to ghcr 2026-07-19. Both floating tag :ifp2-hyv3-mtp and digest-named :ifp2-hyv3-d7e1f26 share manifest sha256:dbb443fc\u2026 (config/image id 57aaafb773b1). Builder toolchain localhost/hal0-rocmfpx-builder:7.2.4 (may or may not be pushed). Referenced, digest-pinned; app follow-up: repin [profile.hy3-fpx] from :ifp2-hyv3-mtp to the digest. hy3 slot enabled=false (91GB weights can't co-reside with agent slot on 128GB)."
     }
   ]
 }
