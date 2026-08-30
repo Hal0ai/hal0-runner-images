@@ -52,8 +52,17 @@ API_VERSION = "2022-11-28"
 # eligible for deletion regardless of age.
 MUTABLE_POINTER_TAGS = {"latest", "main", "master", "edge", "nightly", "server"}
 
-# Per-commit CI tag, e.g. "sha-a1b2c3d" or a full 40-char sha.
+# Per-commit CI tag, e.g. "sha-a1b2c3d" (short) or "sha-<40 hex chars>" (full).
+# NOTE: this intentionally does NOT match a bare 40-hex-char tag with no
+# "sha-" prefix. A bare-hex tag falls through to "unclassified — kept by
+# default" rather than being widened into this pattern — we only
+# auto-delete tags we can positively identify as this repo's CI tagging
+# convention; anything merely hex-shaped is left alone (fail-safe).
 RE_SHA_CI_TAG = re.compile(r"^sha-[0-9a-f]{7,40}$")
+
+# sha256:<64 hex> — used both for GHCR version digests and for the
+# digest-form allowlist refs parsed below ("repo@sha256:<hex>").
+RE_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 # Cosign signature/attestation artifact tag, e.g.
 # "sha256-<64 hex>.sig" or "sha256-<64 hex>.att" (untagged suffix variants
@@ -129,18 +138,61 @@ def build_images_index(images_doc: dict) -> dict:
     return index
 
 
+def parse_allowlist_ref(ref: str) -> tuple[str, str, str]:
+    """Parse one retention-allowlist.json ref into (package, kind, value).
+
+    Two accepted forms:
+      - tag form:    "ghcr.io/hal0ai/<pkg>:<tag>"
+      - digest form: "ghcr.io/hal0ai/<pkg>@sha256:<64 hex>"
+
+    `kind` is "tag" or "digest". Fails LOUD (SystemExit naming the
+    offending ref) on anything it can't confidently classify, rather than
+    silently mis-keying it — a mis-keyed allowlist entry provides zero
+    protection while looking like it protects something, which is worse
+    than refusing to start.
+    """
+    if "@" in ref:
+        repo_part, _, digest = ref.partition("@")
+        if not repo_part or not digest:
+            raise SystemExit(
+                f"retention-allowlist.json: malformed digest ref {ref!r} "
+                "(expected 'repo@sha256:<64 hex>' with a non-empty repo and digest)"
+            )
+        if not RE_DIGEST.match(digest):
+            raise SystemExit(
+                f"retention-allowlist.json: malformed digest ref {ref!r} "
+                "(digest must look like 'sha256:<64 hex chars>')"
+            )
+        return package_name_from_ref(repo_part), "digest", digest
+
+    if ":" in ref:
+        repo_part, tag = ref.rsplit(":", 1)
+        if not repo_part or not tag:
+            raise SystemExit(
+                f"retention-allowlist.json: malformed tag ref {ref!r} "
+                "(expected 'repo:tag' with a non-empty repo and tag)"
+            )
+        return package_name_from_ref(repo_part), "tag", tag
+
+    raise SystemExit(
+        f"retention-allowlist.json: can't parse ref {ref!r} "
+        "(expected 'repo:tag' or 'repo@sha256:<64 hex>')"
+    )
+
+
 def _refs_to_index(refs: list, index: dict) -> None:
     for ref in refs:
-        if ":" not in ref:
-            continue
-        repo_part, tag = ref.rsplit(":", 1)
-        pkg = package_name_from_ref(repo_part)
-        index.setdefault(pkg, set()).add(tag)
+        pkg, kind, value = parse_allowlist_ref(ref)
+        slot = index.setdefault(pkg, {"tags": set(), "digests": set()})
+        if kind == "tag":
+            slot["tags"].add(value)
+        else:
+            slot["digests"].add(value)
 
 
 def build_allowlist_index(allowlist_doc: dict) -> dict:
-    """package name -> set(tags) from retention-allowlist.json."""
-    index: dict[str, set] = {}
+    """package name -> {"tags": set(...), "digests": set(...)} from retention-allowlist.json."""
+    index: dict[str, dict[str, set]] = {}
     _refs_to_index(allowlist_doc.get("hal0_code_pins", []), index)
     _refs_to_index(allowlist_doc.get("evidence", {}).get("refs", []), index)
     return index
@@ -175,7 +227,8 @@ def classify_package(
 
     img_tags = images_index.get(pkg_name, {}).get("tags", set())
     img_digests = images_index.get(pkg_name, {}).get("digests", set())
-    allow_tags = allowlist_index.get(pkg_name, set())
+    allow_tags = allowlist_index.get(pkg_name, {}).get("tags", set())
+    allow_digests = allowlist_index.get(pkg_name, {}).get("digests", set())
 
     digest_to_version = {v["digest"]: v for v in versions}
 
@@ -197,6 +250,8 @@ def classify_package(
         if matched_img_tags:
             reasons.append(f"images.json: tag {matched_img_tags}")
 
+        if v["digest"] in allow_digests:
+            reasons.append("retention-allowlist.json: pinned digest")
         matched_allow_tags = [t for t in tags if t in allow_tags]
         if matched_allow_tags:
             reasons.append(f"retention-allowlist.json: tag {matched_allow_tags}")

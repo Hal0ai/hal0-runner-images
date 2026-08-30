@@ -23,6 +23,7 @@ from retention import (  # noqa: E402
     build_allowlist_index,
     build_images_index,
     classify_package,
+    parse_allowlist_ref,
 )
 
 NOW = datetime(2026, 8, 30, tzinfo=timezone.utc)
@@ -57,6 +58,15 @@ def check(name, results, version_id, expected_status, reason_substring=None):
                 f"got {r['reasons']}"
             )
     print(f"ok: {name}")
+
+
+def check_raises(name, fn, *args, **kwargs):
+    try:
+        fn(*args, **kwargs)
+    except SystemExit as e:
+        print(f"ok: {name} (raised SystemExit: {e})")
+        return
+    FAILURES.append(f"{name}: expected SystemExit, but no exception was raised")
 
 
 # ---------------------------------------------------------------------------
@@ -213,6 +223,95 @@ versions = [
 results = classify_package("hal0-pointers", versions, empty_images_index, allowlist_index2, now=NOW)
 check("main tag kept", results, 1, "keep", "mutable pointer")
 check("edge tag kept", results, 2, "keep", "mutable pointer")
+
+
+# ---------------------------------------------------------------------------
+# Test 10: digest-form allowlist ref ("repo@sha256:<hex>") protects the
+# version by digest, even though its only tag is CI-shaped and would
+# otherwise be deleted.
+# ---------------------------------------------------------------------------
+
+digest_hex = "5" * 64
+allow_digest_doc = {
+    "hal0_code_pins": [f"ghcr.io/hal0ai/hal0-digestpin@sha256:{digest_hex}"],
+    "evidence": {"refs": []},
+}
+allowlist_index_digest = build_allowlist_index(allow_digest_doc)
+
+versions = [
+    v(1, f"sha256:{digest_hex}", ["sha-a1b2c3d"], age_days=400),
+]
+results = classify_package("hal0-digestpin", versions, empty_images_index, allowlist_index_digest, now=NOW)
+check("digest-form allowlist ref protects the version", results, 1, "keep", "retention-allowlist.json: pinned digest")
+
+
+# ---------------------------------------------------------------------------
+# Test 11: malformed allowlist refs abort loudly (SystemExit), never
+# silently mis-key into a useless allowlist entry.
+# ---------------------------------------------------------------------------
+
+check_raises(
+    "ref with no colon/@ aborts",
+    parse_allowlist_ref,
+    "ghcr.io/hal0ai/hal0-nocolon",
+)
+check_raises(
+    "digest-form ref with malformed digest aborts",
+    parse_allowlist_ref,
+    "ghcr.io/hal0ai/hal0-baddigest@sha256:not-hex",
+)
+check_raises(
+    "digest-form ref with empty digest aborts",
+    parse_allowlist_ref,
+    "ghcr.io/hal0ai/hal0-emptydigest@",
+)
+check_raises(
+    "tag-form ref with empty tag aborts",
+    parse_allowlist_ref,
+    "ghcr.io/hal0ai/hal0-emptytag:",
+)
+check_raises(
+    "build_allowlist_index propagates the SystemExit from a bad ref",
+    build_allowlist_index,
+    {"hal0_code_pins": ["not-a-valid-ref"], "evidence": {"refs": []}},
+)
+
+
+# ---------------------------------------------------------------------------
+# Test 12 (safety-critical): a version carrying BOTH a sha-<hex> CI tag AND
+# an unrecognized tag must NOT be deleted — the "every tag must match a
+# debris shape" rule is per-VERSION, not per-tag. One unrecognized tag on
+# an otherwise CI-shaped version means the whole version is unclassified.
+# ---------------------------------------------------------------------------
+
+versions = [
+    v(1, "sha256:" + "6" * 64, ["sha-a1b2c3d", "banana"], age_days=400),
+]
+results = classify_package("hal0-mixedtags", versions, empty_images_index, allowlist_index2, now=NOW)
+check(
+    "mixed sha-ci + unrecognized tag -> unclassified, never deleted",
+    results, 1, "unclassified", "kept by default",
+)
+
+
+# ---------------------------------------------------------------------------
+# Test 13 (safety-critical): digest match keeps a version regardless of
+# which of its tags images.json names. The version carries two tags,
+# NEITHER of which equals the catalogued tag ("v9") — only the digest
+# matches — and it must still be kept.
+# ---------------------------------------------------------------------------
+
+images_index_digest_only = build_images_index(
+    {"images": [{"image": "ghcr.io/hal0ai/hal0-digestwins", "tag": "v9", "digest": "sha256:" + "7" * 64}]}
+)
+versions = [
+    v(1, "sha256:" + "7" * 64, ["random-tag-a", "random-tag-b"], age_days=400),
+]
+results = classify_package("hal0-digestwins", versions, images_index_digest_only, allowlist_index2, now=NOW)
+check(
+    "digest match keeps version regardless of tag naming",
+    results, 1, "keep", "images.json: pinned digest",
+)
 
 
 # ---------------------------------------------------------------------------
