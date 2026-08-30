@@ -1,0 +1,105 @@
+name: GHCR retention sweep
+
+# Sweeps the org's hal0-* GHCR container packages for disposable CI/cosign
+# debris (scripts/retention.py, hal0 runner-images v3 spec §9) and reports
+# what it would remove.
+#
+# FAIL-SAFE POSTURE, on purpose:
+#   - Dry-run by default. Every scheduled (cron) run is ALWAYS dry-run —
+#     the workflow_dispatch `delete` input is the ONLY way to pass --delete
+#     to the script; there is no path from `schedule:` to deletion.
+#   - Untagged versions are NEVER deleted by the script itself (they may be
+#     platform children of a kept multi-arch index) — see retention.py.
+#   - Anything the classifier can't positively name as CI/cosign debris is
+#     reported "unclassified — kept by default" and left alone, including
+#     release-shaped tags beyond the newest-N (v1 never auto-deletes
+#     releases, only CI sha tags and cosign sig/att artifacts).
+#
+# Requires the HAL0_RETENTION_TOKEN secret: a classic PAT with
+# read:packages + delete:packages scope on the hal0ai org. The built-in
+# GITHUB_TOKEN cannot delete org-level packages (GitHub doesn't grant that
+# permission to Actions' default token), so deletion runs are a hard no-op
+# without this secret. If the secret is absent, listing falls back to
+# github.token for a dry-run-only report — note that org package listing
+# may still 403 on github.token depending on org visibility settings, so
+# an empty/failed report there is expected, not a bug.
+#
+# Sync note: retention-allowlist.json is manually maintained — when hal0
+# bumps DEFAULT_ROCMFPX_IMAGE / VULKAN_CAPABLE_IMAGE_REFS in
+# src/hal0/config/schema.py, mirror the new pin(s) into
+# retention-allowlist.json's hal0_code_pins here (automating that export
+# is a known follow-up, see the file's _comment).
+
+on:
+  workflow_dispatch:
+    inputs:
+      delete:
+        description: "DESTRUCTIVE: actually delete candidate versions instead of dry-run reporting. Never set this from a schedule."
+        type: boolean
+        default: false
+  schedule:
+    # Weekly, off-peak (03:00 UTC Sunday). SCHEDULED RUNS ARE ALWAYS DRY-RUN —
+    # see the guard on the "Run retention sweep" step below.
+    - cron: "0 3 * * 0"
+
+concurrency:
+  group: ghcr-retention
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  retention:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run retention sweep
+        id: sweep
+        env:
+          # Prefer the dedicated PAT (needed for deletion and for reliable
+          # org package listing); fall back to the default token, which is
+          # dry-run-listing-only and may 403 on org packages.
+          GH_TOKEN: ${{ secrets.HAL0_RETENTION_TOKEN || github.token }}
+        run: |
+          set -e
+          args=()
+          # Only workflow_dispatch + an explicit true input can add --delete.
+          # `schedule` events have no `inputs` context, so this is always
+          # false on cron runs — belt-and-suspenders with the description
+          # above, not the only thing enforcing it.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.delete }}" = "true" ]; then
+            args+=(--delete)
+          fi
+          python3 scripts/retention.py "${args[@]}"
+
+      - name: Upload retention report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: retention-report
+          path: retention-report.md
+          if-no-files-found: warn
+
+      - name: File/update tracking issue (scheduled runs only)
+        if: always() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          title="GHCR retention report"
+          body_file="retention-report.md"
+          if [ ! -f "$body_file" ]; then
+            echo "no report file produced — skipping issue update" >&2
+            exit 0
+          fi
+          existing=$(gh issue list --search "\"$title\" in:title" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --body-file "$body_file"
+            echo "updated issue #$existing"
+          else
+            gh issue create --title "$title" --body-file "$body_file"
+          fi

@@ -1,0 +1,13 @@
+{
+  "_comment": "Refs the retention sweep must NEVER delete, beyond what images.json and the keep-last-N rule already protect. Two sources: (1) hal0 code pins (sync manually when hal0 bumps DEFAULT_ROCMFPX_IMAGE / VULKAN_CAPABLE_IMAGE_REFS in src/hal0/config/schema.py — automating that export is a known follow-up); (2) issue-evidence refs kept for open investigations.",
+  "hal0_code_pins": ["ghcr.io/hal0ai/hal0-combined:0826"],
+  "evidence": {
+    "_comment": "#1948 Vulkan-restore bisect evidence — keep until that issue closes.",
+    "refs": [
+      "ghcr.io/hal0ai/hal0-rocmfpx:c077206",
+      "ghcr.io/hal0ai/hal0-rocmfpx:vulkan-minicpm5",
+      "ghcr.io/hal0ai/hal0-rocmfpx:ifp2-hyv3-d7e1f26",
+      "ghcr.io/hal0ai/hal0-rocmfpx:ifp2-hyv3-d7e1f26-mtp"
+    ]
+  }
+}
