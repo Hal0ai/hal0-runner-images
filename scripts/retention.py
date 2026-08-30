@@ -433,6 +433,40 @@ def render_report(org: str, all_results: dict, *, dry_run: bool, keep_releases: 
     return "\n".join(lines)
 
 
+def render_outcomes_section(outcomes: list) -> str:
+    """Render the post-delete "Outcomes" section appended to the report.
+
+    `outcomes` is a list of dicts in execution order, one per attempted
+    deletion:
+        {"package": str, "id": int, "tags": [str, ...], "ok": bool, "detail": str}
+    For failures, `detail` carries the HTTP status and body from
+    delete_package_version(). Pure — no I/O — so the fixture tests exercise
+    it directly.
+
+    Only --delete runs get this section; dry-run reports are unchanged
+    (the plan IS the whole story there — nothing was executed).
+    """
+    lines = []
+    lines.append("## Outcomes")
+    lines.append("")
+    ok_count = sum(1 for o in outcomes if o["ok"])
+    failed_count = len(outcomes) - ok_count
+    lines.append(
+        f"Executed {len(outcomes)} deletion(s): {ok_count} deleted OK, {failed_count} failed."
+    )
+    lines.append("")
+    if not outcomes:
+        lines.append("- (no delete candidates — nothing to execute)")
+    for o in outcomes:
+        tags = ", ".join(o["tags"]) if o["tags"] else "(untagged)"
+        if o["ok"]:
+            lines.append(f"- OK: {o['package']} id={o['id']} tags=[{tags}] — deleted")
+        else:
+            lines.append(f"- FAILED: {o['package']} id={o['id']} tags=[{tags}] — {o['detail']}")
+    lines.append("")
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # GitHub API I/O
 # ---------------------------------------------------------------------------
@@ -601,6 +635,7 @@ def main(argv: list | None = None) -> int:
         return 0
 
     had_failure = False
+    outcomes: list = []
     for pkg_name, results in all_results.items():
         for vid, r in results.items():
             if r["status"] != "delete":
@@ -608,11 +643,22 @@ def main(argv: list | None = None) -> int:
             tags = ", ".join(r["tags"]) if r["tags"] else "(untagged)"
             print(f"DELETE {pkg_name} id={vid} tags=[{tags}] ...", file=sys.stderr)
             ok, detail = delete_package_version(args.org, pkg_name, vid, token)
+            outcomes.append(
+                {"package": pkg_name, "id": vid, "tags": r["tags"], "ok": ok, "detail": detail}
+            )
             if ok:
                 print(f"  ok: {detail}", file=sys.stderr)
             else:
                 had_failure = True
                 print(f"  FAILED: {detail}", file=sys.stderr)
+
+    # The report written above is the PLAN; append what actually happened so
+    # the artifact/issue copy carries per-item outcomes, not just job logs.
+    outcomes_section = render_outcomes_section(outcomes)
+    print(outcomes_section)
+    with open(args.report_file, "a", encoding="utf-8") as f:
+        f.write("\n" + outcomes_section)
+    print(f"Outcomes appended to {args.report_file}", file=sys.stderr)
 
     return 1 if had_failure else 0
 
