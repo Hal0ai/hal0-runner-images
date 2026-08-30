@@ -24,6 +24,7 @@ from retention import (  # noqa: E402
     build_images_index,
     classify_package,
     parse_allowlist_ref,
+    render_outcomes_section,
 )
 
 NOW = datetime(2026, 8, 30, tzinfo=timezone.utc)
@@ -57,6 +58,15 @@ def check(name, results, version_id, expected_status, reason_substring=None):
                 f"{name}: expected a reason containing {reason_substring!r} for id={version_id}, "
                 f"got {r['reasons']}"
             )
+    print(f"ok: {name}")
+
+
+def check_text(name, text, must_contain=(), must_not_contain=()):
+    problems = [f"missing {s!r}" for s in must_contain if s not in text]
+    problems += [f"unexpectedly contains {s!r}" for s in must_not_contain if s in text]
+    if problems:
+        FAILURES.append(f"{name}: {'; '.join(problems)}\n--- text was ---\n{text}")
+        return
     print(f"ok: {name}")
 
 
@@ -311,6 +321,45 @@ results = classify_package("hal0-digestwins", versions, images_index_digest_only
 check(
     "digest match keeps version regardless of tag naming",
     results, 1, "keep", "images.json: pinned digest",
+)
+
+
+# ---------------------------------------------------------------------------
+# Test 14: render_outcomes_section — the "Outcomes" block appended to the
+# report after a --delete run. Mixed success/failure, untagged, and empty.
+# ---------------------------------------------------------------------------
+
+outcomes_text = render_outcomes_section(
+    [
+        {"package": "hal0-toolbox-cpu", "id": 11, "tags": ["sha-a1b2c3d"], "ok": True, "detail": "deleted"},
+        {
+            "package": "hal0-rocmfpx",
+            "id": 22,
+            "tags": [],
+            "ok": False,
+            "detail": "403 Forbidden: insufficient scope",
+        },
+    ]
+)
+check_text(
+    "outcomes section: mixed success/failure",
+    outcomes_text,
+    must_contain=[
+        "## Outcomes",
+        "Executed 2 deletion(s): 1 deleted OK, 1 failed.",
+        "- OK: hal0-toolbox-cpu id=11 tags=[sha-a1b2c3d] — deleted",
+        "- FAILED: hal0-rocmfpx id=22 tags=[(untagged)] — 403 Forbidden: insufficient scope",
+    ],
+)
+
+check_text(
+    "outcomes section: empty run",
+    render_outcomes_section([]),
+    must_contain=[
+        "Executed 0 deletion(s): 0 deleted OK, 0 failed.",
+        "- (no delete candidates — nothing to execute)",
+    ],
+    must_not_contain=["- OK:", "- FAILED:"],
 )
 
 
