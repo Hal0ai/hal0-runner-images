@@ -23,8 +23,11 @@ from retention import (  # noqa: E402
     build_allowlist_index,
     build_images_index,
     classify_package,
+    fetch_hal0_pins_export,
     parse_allowlist_ref,
+    parse_hal0_pins_export,
     render_outcomes_section,
+    render_pin_sources_section,
 )
 
 NOW = datetime(2026, 8, 30, tzinfo=timezone.utc)
@@ -360,6 +363,144 @@ check_text(
         "- (no delete candidates — nothing to execute)",
     ],
     must_not_contain=["- OK:", "- FAILED:"],
+)
+
+
+# ---------------------------------------------------------------------------
+# Test 15: parse_hal0_pins_export — valid doc parses; everything else
+# (bad JSON, wrong shape, non-string/empty entries, ZERO pins) aborts loudly.
+# ---------------------------------------------------------------------------
+
+pins = parse_hal0_pins_export(
+    '{"source": "src/hal0/config/schema.py", "pins": ["ghcr.io/hal0ai/hal0-combined:0826"]}',
+    "https://example.invalid/pins.json",
+)
+if pins == ["ghcr.io/hal0ai/hal0-combined:0826"]:
+    print("ok: valid pins export parses")
+else:
+    FAILURES.append(f"valid pins export: unexpected result {pins!r}")
+
+check_raises("pins export: invalid JSON aborts", parse_hal0_pins_export, "not json {", "u")
+check_raises("pins export: non-dict aborts", parse_hal0_pins_export, '["just", "a", "list"]', "u")
+check_raises("pins export: missing pins key aborts", parse_hal0_pins_export, '{"source": "x"}', "u")
+check_raises("pins export: pins not a list aborts", parse_hal0_pins_export, '{"pins": "oops"}', "u")
+check_raises(
+    "pins export: non-string entry aborts", parse_hal0_pins_export, '{"pins": ["ok:tag", 42]}', "u"
+)
+check_raises(
+    "pins export: empty-string entry aborts", parse_hal0_pins_export, '{"pins": [""]}', "u"
+)
+check_raises(
+    "pins export: ZERO pins aborts (broken export)", parse_hal0_pins_export, '{"pins": []}', "u"
+)
+
+
+# ---------------------------------------------------------------------------
+# Test 16: fetch_hal0_pins_export with urllib.request.urlopen STUBBED — no
+# real network. Success path returns the pins; any raised error (e.g. the
+# 404 expected until hal0 publishes the export) aborts the run loudly.
+# ---------------------------------------------------------------------------
+
+import io  # noqa: E402
+import urllib.error  # noqa: E402
+import urllib.request  # noqa: E402
+
+
+class _FakeResponse(io.BytesIO):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+        return False
+
+
+def _with_stubbed_urlopen(fake, fn, *args):
+    real = urllib.request.urlopen
+    urllib.request.urlopen = fake
+    try:
+        return fn(*args)
+    finally:
+        urllib.request.urlopen = real
+
+
+def _fake_ok(req, timeout=None):
+    return _FakeResponse(b'{"source": "src/hal0/config/schema.py", "pins": ["ghcr.io/hal0ai/hal0-combined:0826"]}')
+
+
+def _fake_404(req, timeout=None):
+    raise urllib.error.HTTPError(
+        "https://example.invalid/pins.json", 404, "Not Found", hdrs=None, fp=io.BytesIO(b"404")
+    )
+
+
+fetched = _with_stubbed_urlopen(_fake_ok, fetch_hal0_pins_export, "https://example.invalid/pins.json")
+if fetched == ["ghcr.io/hal0ai/hal0-combined:0826"]:
+    print("ok: stubbed fetch success returns pins")
+else:
+    FAILURES.append(f"stubbed fetch success: unexpected result {fetched!r}")
+
+check_raises(
+    "stubbed fetch 404 aborts loudly",
+    _with_stubbed_urlopen,
+    _fake_404,
+    fetch_hal0_pins_export,
+    "https://example.invalid/pins.json",
+)
+
+
+# ---------------------------------------------------------------------------
+# Test 17 (safety-critical): fetched pins UNION with the local floor — a
+# version protected only by a fetched pin is kept, and a version protected
+# only by the local floor stays kept (the fetch never narrows protection).
+# ---------------------------------------------------------------------------
+
+local_floor_doc = {
+    "hal0_code_pins": ["ghcr.io/hal0ai/hal0-combined:0826"],
+    "evidence": {"refs": []},
+}
+fetched_only_pins = ["ghcr.io/hal0ai/hal0-rocmfpx:newpin1"]
+merged_doc = dict(local_floor_doc)
+merged_doc["hal0_code_pins"] = sorted(
+    set(local_floor_doc["hal0_code_pins"]) | set(fetched_only_pins)
+)
+merged_index = build_allowlist_index(merged_doc)
+
+versions = [
+    v(1, "sha256:" + "a" * 63 + "b", ["newpin1"], age_days=400),
+]
+results = classify_package("hal0-rocmfpx", versions, empty_images_index, merged_index, now=NOW)
+check("fetched-only pin protects its version", results, 1, "keep", "retention-allowlist.json: tag")
+
+versions = [
+    v(1, "sha256:" + "b" * 63 + "c", ["0826"], age_days=400),
+]
+results = classify_package("hal0-combined", versions, empty_images_index, merged_index, now=NOW)
+check("local-floor pin still protects after union", results, 1, "keep", "retention-allowlist.json: tag")
+
+
+# ---------------------------------------------------------------------------
+# Test 18: render_pin_sources_section attributes each pin to its source(s).
+# ---------------------------------------------------------------------------
+
+pin_sources_text = "\n".join(
+    render_pin_sources_section(
+        {
+            "url": "https://example.invalid/pins.json",
+            "local": ["ghcr.io/hal0ai/hal0-combined:0826", "ghcr.io/hal0ai/hal0-oldpin:1"],
+            "fetched": ["ghcr.io/hal0ai/hal0-combined:0826", "ghcr.io/hal0ai/hal0-rocmfpx:newpin1"],
+        }
+    )
+)
+check_text(
+    "pin sources section attributes pins",
+    pin_sources_text,
+    must_contain=[
+        "## hal0 code pins by source",
+        "- `ghcr.io/hal0ai/hal0-combined:0826` — local allowlist + hal0 export",
+        "- `ghcr.io/hal0ai/hal0-oldpin:1` — local allowlist only",
+        "- `ghcr.io/hal0ai/hal0-rocmfpx:newpin1` — hal0 export only",
+    ],
 )
 
 

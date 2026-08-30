@@ -10,6 +10,13 @@ version (it may be a platform child of a kept multi-arch index; GHCR does
 not expose that parent/child link over this API, so untagged is a hard
 keep, no exceptions).
 
+hal0's own image pins arrive from TWO sources, unioned: the local
+`hal0_code_pins` floor in retention-allowlist.json, plus a machine-readable
+export fetched at run start from Hal0ai/hal0 (HAL0_PINS_EXPORT_URL, generated
+from src/hal0/config/schema.py). The union only ever widens protection, and
+any fetch/parse failure — 404 included — aborts the run before anything is
+planned, for dry-run and --delete alike.
+
 Fail-safe by construction: anything the policy can't positively identify
 as CI/cosign debris is reported "unclassified — kept by default" and left
 alone. This is intentional in v1 — plain release-shaped tags beyond the
@@ -76,6 +83,16 @@ RE_RELEASE_TAG = re.compile(r"^(\d+|v\d+(\.\d+)*)$")
 DEFAULT_ORG = "hal0ai"
 DEFAULT_KEEP_RELEASES = 4
 DEFAULT_GRACE_DAYS = 14
+
+# Machine-readable export of hal0's runner-image pins (DEFAULT_ROCMFPX_IMAGE /
+# VULKAN_CAPABLE_IMAGE_REFS from src/hal0/config/schema.py). Fetched at run
+# start and UNIONED with the local hal0_code_pins in retention-allowlist.json —
+# the merge only ever WIDENS protection, never narrows it, and any
+# fetch/parse failure (404 included) aborts the whole run before anything is
+# planned, dry-run and --delete alike.
+HAL0_PINS_EXPORT_URL = (
+    "https://raw.githubusercontent.com/Hal0ai/hal0/main/exports/runner-image-pins.json"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -196,6 +213,64 @@ def build_allowlist_index(allowlist_doc: dict) -> dict:
     _refs_to_index(allowlist_doc.get("hal0_code_pins", []), index)
     _refs_to_index(allowlist_doc.get("evidence", {}).get("refs", []), index)
     return index
+
+
+def parse_hal0_pins_export(raw: str, url: str) -> list:
+    """Parse the hal0 runner-image pins export into a list of image refs.
+
+    Expected shape (produced by Hal0ai/hal0's exports/runner-image-pins.json):
+        {"source": "src/hal0/config/schema.py", "pins": ["<image refs>"]}
+
+    Pure — no I/O — so the fixture tests exercise it directly. Fails LOUD
+    (SystemExit) on anything unexpected, including an EMPTY pins list: hal0
+    always pins at least one runner image, so zero pins means the export is
+    broken, and running with a silently-missing pin list is exactly the
+    failure mode this fetch exists to prevent. Each returned ref is further
+    validated by parse_allowlist_ref() when the merged set is indexed.
+    """
+    try:
+        doc = json.loads(raw)
+    except ValueError as e:
+        raise SystemExit(f"FATAL: hal0 pins export at {url} is not valid JSON: {e}")
+    if not isinstance(doc, dict) or not isinstance(doc.get("pins"), list):
+        raise SystemExit(
+            f"FATAL: hal0 pins export at {url} has an unexpected shape "
+            '(expected {"source": "...", "pins": ["<image refs>"]})'
+        )
+    pins = doc["pins"]
+    bad = [p for p in pins if not isinstance(p, str) or not p.strip()]
+    if bad:
+        raise SystemExit(
+            f"FATAL: hal0 pins export at {url}: non-string/empty entries in \"pins\": {bad!r}"
+        )
+    if not pins:
+        raise SystemExit(
+            f"FATAL: hal0 pins export at {url} lists ZERO pins — hal0 always pins "
+            "at least one runner image, so an empty export means it is broken. "
+            "Refusing to run against a suspect pin list."
+        )
+    return pins
+
+
+def fetch_hal0_pins_export(url: str) -> list:
+    """Fetch and parse the hal0 pins export. ANY failure aborts the run.
+
+    404 included: until Hal0ai/hal0 publishes the export, this hard failure
+    is deliberate — the sweep must not plan (let alone delete) anything
+    without the authoritative pin list. Applies to dry-run and --delete
+    alike.
+    """
+    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            raw = resp.read().decode("utf-8")
+    except Exception as e:  # HTTPError, URLError, timeout, decode — anything
+        raise SystemExit(
+            f"FATAL: could not fetch the hal0 runner-image pins export from {url}: {e}\n"
+            "Refusing to plan or delete anything without the authoritative hal0 "
+            "pin list (dry-run included)."
+        )
+    return parse_hal0_pins_export(raw, url)
 
 
 # ---------------------------------------------------------------------------
@@ -378,7 +453,39 @@ def classify_org(
 # ---------------------------------------------------------------------------
 
 
-def render_report(org: str, all_results: dict, *, dry_run: bool, keep_releases: int, grace_days: int) -> str:
+def render_pin_sources_section(pin_sources: dict) -> list:
+    """Render the "hal0 code pins by source" block as a list of lines.
+
+    `pin_sources` is {"url": str, "local": [refs], "fetched": [refs]} —
+    the local retention-allowlist.json hal0_code_pins floor and the pins
+    fetched from the hal0 export, before their union. Pure — the fixture
+    tests exercise it directly.
+    """
+    local = set(pin_sources.get("local", []))
+    fetched = set(pin_sources.get("fetched", []))
+    lines = []
+    lines.append("## hal0 code pins by source")
+    lines.append("")
+    lines.append(
+        f"Fetched {len(fetched)} pin(s) from `{pin_sources.get('url')}` and unioned "
+        f"with {len(local)} local `hal0_code_pins` ref(s) from retention-allowlist.json "
+        "(defense in depth — the union only ever widens protection, never narrows it)."
+    )
+    lines.append("")
+    for ref in sorted(local | fetched):
+        if ref in local and ref in fetched:
+            src = "local allowlist + hal0 export"
+        elif ref in local:
+            src = "local allowlist only"
+        else:
+            src = "hal0 export only"
+        lines.append(f"- `{ref}` — {src}")
+    lines.append("")
+    return lines
+
+
+def render_report(org: str, all_results: dict, *, dry_run: bool, keep_releases: int,
+                  grace_days: int, pin_sources: dict | None = None) -> str:
     lines = []
     lines.append("# GHCR retention report")
     lines.append("")
@@ -395,6 +502,9 @@ def render_report(org: str, all_results: dict, *, dry_run: bool, keep_releases: 
         "debris; releases are never auto-deleted."
     )
     lines.append("")
+
+    if pin_sources is not None:
+        lines.extend(render_pin_sources_section(pin_sources))
 
     total_keep = total_delete = total_unclassified = 0
 
@@ -582,6 +692,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help=f"Never delete anything younger than this many days (default: {DEFAULT_GRACE_DAYS})",
     )
     parser.add_argument(
+        "--pins-url", default=HAL0_PINS_EXPORT_URL,
+        help="URL of hal0's machine-readable runner-image pins export, unioned "
+             "with the local hal0_code_pins; ANY fetch/parse failure aborts the "
+             f"run before planning anything (default: {HAL0_PINS_EXPORT_URL})",
+    )
+    parser.add_argument(
         "--delete", action="store_true",
         help="Actually perform deletions. Default is dry-run (report only).",
     )
@@ -600,8 +716,26 @@ def main(argv: list | None = None) -> int:
 
     images_doc = load_json_file(args.images_json)
     allowlist_doc = load_json_file(args.allowlist)
+
+    # Fetch hal0's authoritative pin export FIRST — before listing a single
+    # package — and union it with the local hal0_code_pins floor. Any
+    # fetch/parse failure is a SystemExit inside fetch_hal0_pins_export, so
+    # a broken/missing export means no plan and no deletions, full stop.
+    local_pins = list(allowlist_doc.get("hal0_code_pins", []))
+    print(f"Fetching hal0 code pins export from {args.pins_url}...", file=sys.stderr)
+    fetched_pins = fetch_hal0_pins_export(args.pins_url)
+    print(
+        f"Fetched {len(fetched_pins)} pin(s); local hal0_code_pins floor has {len(local_pins)}.",
+        file=sys.stderr,
+    )
+    merged_doc = dict(allowlist_doc)
+    merged_doc["hal0_code_pins"] = sorted(set(local_pins) | set(fetched_pins))
+    pin_sources = {"url": args.pins_url, "local": local_pins, "fetched": fetched_pins}
+
     images_index = build_images_index(images_doc)
-    allowlist_index = build_allowlist_index(allowlist_doc)
+    # build_allowlist_index re-validates every merged ref via
+    # parse_allowlist_ref, so a malformed fetched pin also aborts loudly here.
+    allowlist_index = build_allowlist_index(merged_doc)
 
     print(f"Listing container packages for org '{args.org}'...", file=sys.stderr)
     packages_meta = list_org_container_packages(args.org, token)
@@ -624,6 +758,7 @@ def main(argv: list | None = None) -> int:
     report = render_report(
         args.org, all_results, dry_run=not args.delete,
         keep_releases=args.keep_releases, grace_days=args.grace_days,
+        pin_sources=pin_sources,
     )
     print(report)
     with open(args.report_file, "w", encoding="utf-8") as f:
