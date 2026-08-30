@@ -160,6 +160,24 @@
         "builder_base": "localhost/hal0-rocmfpx-builder:7.2.4"
       },
       "notes": "Hy3 variant of the FPX runner: adds IFP2 (ggml type107) + minicpm5 + the hy_v3 NextN/MTP patch so Hy3-Chadrock-FPX-IFP2-MTP loads. Built 2026-07-14 on CT105; was local-only until pushed to ghcr 2026-07-19. Both floating tag :ifp2-hyv3-mtp and digest-named :ifp2-hyv3-d7e1f26 share manifest sha256:dbb443fc\u2026 (config/image id 57aaafb773b1). Builder toolchain localhost/hal0-rocmfpx-builder:7.2.4 (may or may not be pushed). Referenced, digest-pinned; app follow-up: repin [profile.hy3-fpx] from :ifp2-hyv3-mtp to the digest. hy3 slot enabled=false (91GB weights can't co-reside with agent slot on 128GB)."
+    },
+    {
+      "id": "promptforge",
+      "display_name": "PromptForge (Qwen3.8 ActiveFPX, HIP-only)",
+      "image": "ghcr.io/hal0ai/hal0-promptforge",
+      "tag": "v2.3-qwen38",
+      "digest": "sha256:370af6e9717e8c96742198a4b920888e6a248d447e21e3432de4d2c913703aea",
+      "manifest_key": null,
+      "app_pin": "DEFAULT_PROMPTFORGE_IMAGE (src/hal0/config/schema.py) \u2014 CANDIDATE until the ct150 validation gate (hal0#1891) passes; gate procedure staged 2026-08-30",
+      "ownership": "referenced",
+      "publish": "manual",
+      "build": {
+        "source_repo": "https://github.com/ciru-ai/ROCmFPX",
+        "ref": "103af8b411dfe47fe9110a480a02341137c68246",
+        "build_script": "packaging/runner/promptforge/build.sh in Hal0ai/hal0 (manifest.toml is the tracked recipe; Containerfiles generated)",
+        "builder_base": "registry.fedoraproject.org/fedora-minimal:43@sha256:64d7765c1c6af97ff168d112eee06731676ad32bd5a8fc15d97cfd938ad4e281 + TheRock 7.15.0a20260728 gfx1151 dist tarball (no pullable TheRock runtime container exists)"
+      },
+      "notes": "Accelerated HIP-only runner (GGML_VULKAN=OFF) for jcbtc/Qwen3.8-27B-CIRU-ActiveFPX-PromptForge \u2014 mutually exclusive with hal0-combined, never the general default. ciru-ai tree (ciru's gfx1151 Vulkan defect never executes in a HIP-only build) + the card's 627-line Output-K8 runtime patch. Built on CT130 via the tracked app-repo recipe (Gitea lane: build-promptforge.yml in the -dev sidecar); manifest_key stays null until the #1891 gate passes, then manifest.json.toolbox_images.promptforge is re-added with the real digest (it was deliberately removed \u2014 release-check fails on null digest)."
     }
   ]
 }
