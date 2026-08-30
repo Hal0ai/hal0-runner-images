@@ -24,11 +24,13 @@ name: GHCR retention sweep
 # may still 403 on github.token depending on org visibility settings, so
 # an empty/failed report there is expected, not a bug.
 #
-# Sync note: retention-allowlist.json is manually maintained — when hal0
-# bumps DEFAULT_ROCMFPX_IMAGE / VULKAN_CAPABLE_IMAGE_REFS in
-# src/hal0/config/schema.py, mirror the new pin(s) into
-# retention-allowlist.json's hal0_code_pins here (automating that export
-# is a known follow-up, see the file's _comment).
+# Sync note: hal0's code pins (DEFAULT_ROCMFPX_IMAGE /
+# VULKAN_CAPABLE_IMAGE_REFS in src/hal0/config/schema.py) reach the sweep
+# two ways, unioned: retention.py fetches hal0's machine-readable export
+# (exports/runner-image-pins.json on Hal0ai/hal0 main) at run start, and
+# retention-allowlist.json's hal0_code_pins stays as a manually-maintained
+# local floor. Any fetch/parse failure of the export — 404 included —
+# aborts the run (dry-run and delete alike) before anything is planned.
 
 on:
   workflow_dispatch:
