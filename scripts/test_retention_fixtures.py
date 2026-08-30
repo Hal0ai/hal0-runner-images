@@ -1,0 +1,229 @@
+#!/usr/bin/env python3
+"""Fixture tests for scripts/retention.py's classification core.
+
+Deliberately NOT pytest — run directly with `python3` so it needs nothing
+beyond the stdlib, matching retention.py itself:
+
+    python3 scripts/test_retention_fixtures.py
+
+Exercises classify_package() against small synthetic version sets. Each
+test asserts a single version's resolved status (and, where it matters,
+that a specific reason string shows up) so a failure points straight at
+which rule broke.
+"""
+
+from __future__ import annotations
+
+import sys
+from datetime import datetime, timedelta, timezone
+
+sys.path.insert(0, __file__.rsplit("/", 1)[0])
+
+from retention import (  # noqa: E402
+    build_allowlist_index,
+    build_images_index,
+    classify_package,
+)
+
+NOW = datetime(2026, 8, 30, tzinfo=timezone.utc)
+
+
+def days_ago(n: int) -> datetime:
+    return NOW - timedelta(days=n)
+
+
+def v(id_, digest, tags, age_days):
+    return {"id": id_, "digest": digest, "tags": tags, "created_at": days_ago(age_days)}
+
+
+FAILURES = []
+
+
+def check(name, results, version_id, expected_status, reason_substring=None):
+    r = results.get(version_id)
+    if r is None:
+        FAILURES.append(f"{name}: version id={version_id} missing from results")
+        return
+    if r["status"] != expected_status:
+        FAILURES.append(
+            f"{name}: expected status={expected_status!r} for id={version_id}, got {r['status']!r} "
+            f"(reasons={r['reasons']})"
+        )
+        return
+    if reason_substring is not None:
+        if not any(reason_substring in reason for reason in r["reasons"]):
+            FAILURES.append(
+                f"{name}: expected a reason containing {reason_substring!r} for id={version_id}, "
+                f"got {r['reasons']}"
+            )
+    print(f"ok: {name}")
+
+
+# ---------------------------------------------------------------------------
+# Test 1: images.json-named tag is kept.
+# ---------------------------------------------------------------------------
+
+images_doc = {
+    "images": [
+        {"image": "ghcr.io/hal0ai/hal0-toolbox-cpu", "tag": "v1"},
+    ]
+}
+images_index = build_images_index(images_doc)
+allowlist_index = build_allowlist_index({"hal0_code_pins": [], "evidence": {"refs": []}})
+
+versions = [
+    v(1, "sha256:" + "a" * 64, ["v1"], age_days=400),  # named in images.json
+]
+results = classify_package("hal0-toolbox-cpu", versions, images_index, allowlist_index, now=NOW)
+check("images.json-named tag kept", results, 1, "keep", "images.json")
+
+
+# ---------------------------------------------------------------------------
+# Test 2: allowlist-named tag is kept.
+# ---------------------------------------------------------------------------
+
+allow_doc = {
+    "hal0_code_pins": ["ghcr.io/hal0ai/hal0-combined:0826"],
+    "evidence": {"refs": ["ghcr.io/hal0ai/hal0-rocmfpx:c077206"]},
+}
+allowlist_index2 = build_allowlist_index(allow_doc)
+empty_images_index = build_images_index({"images": []})
+
+versions = [
+    v(1, "sha256:" + "b" * 64, ["0826"], age_days=400),
+]
+results = classify_package("hal0-combined", versions, empty_images_index, allowlist_index2, now=NOW)
+check("allowlist-named tag kept (hal0_code_pins)", results, 1, "keep", "allowlist")
+
+versions = [
+    v(1, "sha256:" + "c" * 64, ["c077206"], age_days=400),
+]
+results = classify_package("hal0-rocmfpx", versions, empty_images_index, allowlist_index2, now=NOW)
+check("allowlist-named tag kept (evidence.refs)", results, 1, "keep", "allowlist")
+
+
+# ---------------------------------------------------------------------------
+# Test 3: newest-4 numeric release tags kept; 5th oldest numeric tag falls to
+# unclassified (NOT deleted — releases beyond newest-N are kept by default
+# in v1, only CI/cosign debris is auto-deleted).
+# ---------------------------------------------------------------------------
+
+versions = [
+    v(1, "sha256:" + "1" * 64, ["100"], age_days=10),
+    v(2, "sha256:" + "2" * 64, ["101"], age_days=20),
+    v(3, "sha256:" + "3" * 64, ["102"], age_days=30),
+    v(4, "sha256:" + "4" * 64, ["103"], age_days=40),
+    v(5, "sha256:" + "5" * 64, ["99"], age_days=400),  # 5th newest by created_at -> oldest here
+]
+results = classify_package(
+    "hal0-releasey", versions, empty_images_index, allowlist_index2, keep_releases=4, now=NOW
+)
+check("newest-4 numeric tag #1 kept", results, 1, "keep", "newest 4")
+check("newest-4 numeric tag #2 kept", results, 2, "keep", "newest 4")
+check("newest-4 numeric tag #3 kept", results, 3, "keep", "newest 4")
+check("newest-4 numeric tag #4 kept", results, 4, "keep", "newest 4")
+check("5th-oldest numeric tag -> unclassified, kept by default", results, 5, "unclassified", "kept by default")
+
+
+# ---------------------------------------------------------------------------
+# Test 4: plain CI sha tag, old -> delete.
+# ---------------------------------------------------------------------------
+
+versions = [
+    v(1, "sha256:" + "d" * 64, ["sha-a1b2c3d"], age_days=400),
+]
+results = classify_package("hal0-toolbox-cpu-ci", versions, empty_images_index, allowlist_index2, now=NOW)
+check("old ci sha tag deleted", results, 1, "delete", "CI sha")
+
+
+# ---------------------------------------------------------------------------
+# Test 5: young CI sha tag (<14d) -> kept (grace window).
+# ---------------------------------------------------------------------------
+
+versions = [
+    v(1, "sha256:" + "e" * 64, ["sha-a1b2c3d"], age_days=3),
+]
+results = classify_package("hal0-toolbox-cpu-ci2", versions, empty_images_index, allowlist_index2, now=NOW)
+check("young ci sha tag kept (grace window)", results, 1, "keep", "grace window")
+
+
+# ---------------------------------------------------------------------------
+# Test 6: cosign sig whose subject is KEPT -> cosign kept too.
+# ---------------------------------------------------------------------------
+
+subject_digest_hex = "f" * 64
+subject_digest = f"sha256:{subject_digest_hex}"
+versions = [
+    v(1, subject_digest, ["v1"], age_days=400),  # kept via images.json
+    v(2, "sha256:" + "0" * 64, [f"sha256-{subject_digest_hex}.sig"], age_days=400),
+]
+images_index3 = build_images_index({"images": [{"image": "ghcr.io/hal0ai/hal0-signed", "tag": "v1"}]})
+results = classify_package("hal0-signed", versions, images_index3, allowlist_index2, now=NOW)
+check("cosign sig with kept subject -> subject kept", results, 1, "keep", "images.json")
+check("cosign sig with kept subject -> cosign kept too", results, 2, "keep", "subject")
+
+
+# ---------------------------------------------------------------------------
+# Test 7: cosign sig whose subject is DELETED (old ci sha, no keep rule) ->
+# cosign deleted too.
+# ---------------------------------------------------------------------------
+
+subject_digest_hex2 = "9" * 64
+subject_digest2 = f"sha256:{subject_digest_hex2}"
+versions = [
+    v(1, subject_digest2, ["sha-deadbee"], age_days=400),  # no keep rule -> delete
+    v(2, "sha256:" + "8" * 64, [f"sha256-{subject_digest_hex2}.sig"], age_days=400),
+]
+results = classify_package("hal0-signed2", versions, empty_images_index, allowlist_index2, now=NOW)
+check("subject with no keep rule -> deleted", results, 1, "delete", "CI sha")
+check("cosign sig with deleted subject -> deleted too", results, 2, "delete", "deleted or absent")
+
+
+# ---------------------------------------------------------------------------
+# Test 7b: cosign sig whose subject is entirely ABSENT from the package ->
+# cosign deleted too (orphaned signature).
+# ---------------------------------------------------------------------------
+
+versions = [
+    v(1, "sha256:" + "7" * 64, ["sha256-" + ("6" * 64) + ".att"], age_days=400),
+]
+results = classify_package("hal0-signed3", versions, empty_images_index, allowlist_index2, now=NOW)
+check("cosign att with absent subject -> deleted", results, 1, "delete", "absent")
+
+
+# ---------------------------------------------------------------------------
+# Test 8: untagged version -> always kept, regardless of age.
+# ---------------------------------------------------------------------------
+
+versions = [
+    v(1, "sha256:" + "5" * 63 + "a", [], age_days=1000),
+]
+results = classify_package("hal0-multiarch", versions, empty_images_index, allowlist_index2, now=NOW)
+check("untagged version kept regardless of age", results, 1, "keep", "untagged")
+
+
+# ---------------------------------------------------------------------------
+# Test 9: mutable pointer tags (main/edge/etc.) always kept.
+# ---------------------------------------------------------------------------
+
+versions = [
+    v(1, "sha256:" + "3" * 63 + "a", ["main"], age_days=1000),
+    v(2, "sha256:" + "4" * 63 + "a", ["edge"], age_days=1000),
+]
+results = classify_package("hal0-pointers", versions, empty_images_index, allowlist_index2, now=NOW)
+check("main tag kept", results, 1, "keep", "mutable pointer")
+check("edge tag kept", results, 2, "keep", "mutable pointer")
+
+
+# ---------------------------------------------------------------------------
+# Summary
+# ---------------------------------------------------------------------------
+
+if FAILURES:
+    print(f"\n{len(FAILURES)} FAILURE(S):")
+    for f in FAILURES:
+        print(f" - {f}")
+    sys.exit(1)
+
+print(f"\nAll fixture checks passed.")
+sys.exit(0)
