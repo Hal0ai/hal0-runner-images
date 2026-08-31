@@ -1,6 +1,6 @@
 {
   "schema": "hal0.runner-images.v1",
-  "_comment": "Source of truth for hal0 runner images. TWO orthogonal axes: (1) `ownership` = does the Dockerfile live in THIS repo (owned) or in an upstream repo we only pin (referenced); (2) `publish` = who builds+pushes the canonical image. publish values: 'ci' = THIS repo's build-matrix.yml builds+pushes it (only comfyui today; future new owned images e.g. vibevoice); 'external' = Dockerfile is archived here for provenance/reproducibility, but the canonical published image comes from another lineage \u2014 CI must NOT rebuild/repush it (would 403 on the pre-existing org package and/or overwrite the canonical artifact), we only pin its digest; 'manual' = referenced source repo builds it, pin only. The plan job builds ONLY publish=='ci'. scripts/emit-manifest.sh resolves the published ghcr digest for EVERY image with a manifest_key and PRs it into Hal0ai/hal0 manifest.json \u2014 independent of publish. rocmfpx/vulkanfpx use an app-side pin (DEFAULT_ROCMFPX_IMAGE, schema.py) rather than manifest.json.toolbox_images. SCHEMA NOTE: `images` is an ARRAY (hal0's runner-image sync \u2014 src/hal0/registry/runner_image_sync.py \u2014 requires a list); each entry carries its short name in `id`.",
+  "_comment": "Source of truth for hal0 runner images. TWO orthogonal axes: (1) `ownership` = does the Dockerfile live in THIS repo (owned) or in an upstream repo we only pin (referenced); (2) `publish` = who builds+pushes the canonical image. publish values: 'ci' = THIS repo's build-matrix.yml builds+pushes it (only comfyui today; future new owned images e.g. vibevoice); 'external' = Dockerfile is archived here for provenance/reproducibility, but the canonical published image comes from another lineage \u2014 CI must NOT rebuild/repush it (would 403 on the pre-existing org package and/or overwrite the canonical artifact), we only pin its digest; 'manual' = referenced source repo builds it, pin only. The plan job builds ONLY publish=='ci'. scripts/emit-manifest.sh resolves the published ghcr digest for EVERY image with a manifest_key and PRs it into Hal0ai/hal0 manifest.json \u2014 independent of publish. rocmfpx/vulkanfpx use an app-side pin (DEFAULT_ROCMFPX_IMAGE, schema.py) rather than manifest.json.toolbox_images. SCHEMA NOTE: `images` is an ARRAY (hal0's runner-image sync \u2014 src/hal0/registry/runner_image_sync.py \u2014 requires a list); each entry carries its short name in `id`. RUNTIME METADATA (Hal0ai/hal0 feat/catalogue-runtime-metadata): `runtime_family` = the runtime the image's entrypoint serves, same vocabulary as hal0's RuntimeFamily (src/hal0/runners/__init__.py); `supported_backends` = backends the runner binary can execute, same semantics as Runner.supported_backends (metadata, not a selector). hal0's sync merges both onto catalogue rows so the slot drawer's catalogued-pin lane stops assuming every row is llama-server.",
   "images": [
     {
       "id": "cpu",
@@ -9,6 +9,10 @@
       "manifest_key": "cpu",
       "ownership": "owned",
       "publish": "external",
+      "runtime_family": "llama-server",
+      "supported_backends": [
+        "cpu"
+      ],
       "build": {
         "context": "cpu",
         "dockerfile": "cpu/Dockerfile",
@@ -25,6 +29,10 @@
       "manifest_key": "flm",
       "ownership": "owned",
       "publish": "external",
+      "runtime_family": "flm",
+      "supported_backends": [
+        "npu"
+      ],
       "build": {
         "context": "flm",
         "dockerfile": "flm/Dockerfile",
@@ -41,6 +49,10 @@
       "manifest_key": "kokoro",
       "ownership": "owned",
       "publish": "external",
+      "runtime_family": "kokoro",
+      "supported_backends": [
+        "cpu"
+      ],
       "build": {
         "context": "kokoro",
         "dockerfile": "kokoro/Dockerfile",
@@ -57,6 +69,10 @@
       "manifest_key": "moonshine",
       "ownership": "owned",
       "publish": "external",
+      "runtime_family": "moonshine",
+      "supported_backends": [
+        "cpu"
+      ],
       "build": {
         "context": "moonshine",
         "dockerfile": "moonshine/Dockerfile",
@@ -73,6 +89,10 @@
       "manifest_key": "qwen3tts",
       "ownership": "owned",
       "publish": "external",
+      "runtime_family": "qwen3tts",
+      "supported_backends": [
+        "rocm"
+      ],
       "build": {
         "context": "qwen3tts",
         "dockerfile": "qwen3tts/Dockerfile",
@@ -91,6 +111,10 @@
       "manifest_key": "comfyui",
       "ownership": "owned",
       "publish": "ci",
+      "runtime_family": "comfyui",
+      "supported_backends": [
+        "rocm"
+      ],
       "build": {
         "context": "comfyui",
         "dockerfile": "comfyui/Dockerfile",
@@ -108,6 +132,10 @@
       "manifest_key": "vulkan",
       "ownership": "referenced",
       "publish": "manual",
+      "runtime_family": "llama-server",
+      "supported_backends": [
+        "vulkan"
+      ],
       "build": {
         "source_repo": "https://github.com/Hal0ai/amd-strix-halo-toolboxes",
         "ref": "main",
@@ -122,6 +150,10 @@
       "manifest_key": "rocm",
       "ownership": "referenced",
       "publish": "manual",
+      "runtime_family": "llama-server",
+      "supported_backends": [
+        "rocm"
+      ],
       "build": {
         "source_repo": "https://github.com/Hal0ai/amd-strix-halo-toolboxes",
         "ref": "main",
@@ -134,6 +166,11 @@
       "image": "ghcr.io/hal0ai/hal0-combined",
       "ownership": "owned",
       "publish": "external",
+      "runtime_family": "llama-server",
+      "supported_backends": [
+        "rocm",
+        "vulkan"
+      ],
       "notes": "Canonical ROCmFPX+Vulkan combined runner (llama-server). Built from Hal0ai/hal0 packaging/runner/rocmfpx/build.sh; tag pinned app-side (DEFAULT_ROCMFPX_IMAGE). No pinned tag here on purpose: the hal0 catalogue tracks tags/list so fresh pushes surface on sync."
     },
     {
@@ -141,6 +178,11 @@
       "image": "ghcr.io/hal0ai/hal0-combined-upstream",
       "ownership": "owned",
       "publish": "external",
+      "runtime_family": "llama-server",
+      "supported_backends": [
+        "rocm",
+        "vulkan"
+      ],
       "notes": "Pristine-upstream llama.cpp variant of the combined runner (adds qwen4exp / Qwen3.8-Flash-Next; lacks ROCmFPX quant formats and the MiniCPM5/LFM2.5 patches). Built from Hal0ai/hal0 packaging/runner/upstream/build.sh; wire to slots ONLY via per-slot image_pin, never as the default. Temporary: retire per Hal0ai/hal0#2118 once ROCmFPX syncs qwen4exp."
     },
     {
@@ -152,6 +194,10 @@
       "app_pin": "[profile.hy3-fpx] in /etc/hal0/profiles.toml (host-side; not in this repo)",
       "ownership": "referenced",
       "publish": "manual",
+      "runtime_family": "llama-server",
+      "supported_backends": [
+        "rocm"
+      ],
       "build": {
         "source_repo": "https://github.com/Hal0ai/Hal0_ROCmFPX",
         "ref": "d7e1f26",
@@ -171,6 +217,10 @@
       "app_pin": "DEFAULT_PROMPTFORGE_IMAGE (src/hal0/config/schema.py) \u2014 CANDIDATE until the ct150 validation gate (hal0#1891) passes; gate procedure staged 2026-08-30",
       "ownership": "referenced",
       "publish": "manual",
+      "runtime_family": "llama-server",
+      "supported_backends": [
+        "rocm"
+      ],
       "build": {
         "source_repo": "https://github.com/ciru-ai/ROCmFPX",
         "ref": "103af8b411dfe47fe9110a480a02341137c68246",
