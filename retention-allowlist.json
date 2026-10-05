@@ -1,6 +1,13 @@
 {
   "_comment": "Refs the retention sweep must NEVER delete, beyond what images.json and the keep-last-N rule already protect. Two sources: (1) hal0 code pins — this list is the LOCAL FLOOR; retention.py additionally fetches hal0's machine-readable export (exports/runner-image-pins.json on Hal0ai/hal0 main, generated from src/hal0/config/schema.py) at run start and UNIONS it with this list, aborting the whole run on any fetch/parse failure. Keep this local floor populated anyway (defense in depth); (2) issue-evidence refs kept for open investigations.",
-  "hal0_code_pins": ["ghcr.io/hal0ai/hal0-combined:0826"],
+  "_comment_hal0_code_pins": "Mirrors hal0 src/hal0/config/schema.py (DEFAULT_ROCMFPX_IMAGE, DEFAULT_STRIX_IMAGE, DEFAULT_PROMPTFORGE_IMAGE) plus the manifest.json toolbox_images.{strix,promptforge} digests those tags are pinned at. Tag AND digest form, so a re-pushed tag cannot orphan the consumed digest. The rocm-7.2.4-rocmfp4-server base digest every runners/* recipe FROMs lives in ghcr.io/hal0ai/amd-strix-halo-toolboxes, which the sweep never touches (it lists hal0-* packages only); that package must never be deleted (docs/CONSOLIDATION.md).",
+  "hal0_code_pins": [
+    "ghcr.io/hal0ai/hal0-combined:0826",
+    "ghcr.io/hal0ai/hal0-strix-vulkan:0831",
+    "ghcr.io/hal0ai/hal0-strix-vulkan@sha256:b50a73487d05bcae146aa54170cec981c7c6a158cc5cd1fa45a6096dfc5fe107",
+    "ghcr.io/hal0ai/hal0-promptforge:v2.3-qwen38",
+    "ghcr.io/hal0ai/hal0-promptforge@sha256:370af6e9717e8c96742198a4b920888e6a248d447e21e3432de4d2c913703aea"
+  ],
   "evidence": {
     "_comment": "#1948 Vulkan-restore bisect evidence — keep until that issue closes.",
     "refs": [
