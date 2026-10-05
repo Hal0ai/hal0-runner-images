@@ -1,0 +1,28 @@
+{
+  "schema": "hal0.build-recipes.v1",
+  "_comment": "Build targets that are NOT hal0 catalogue rows: base images and the Vulkan server lineage moved here from Hal0ai/amd-strix-halo-toolboxes. They are kept out of images.json on purpose, because hal0's runner-image sync turns every images.json entry into a slot-selectable row. build-matrix.yml builds these ONLY via workflow_dispatch (`only` = the id). Every push goes to a NEW package under ghcr.io/hal0ai/ and a NEW immutable tag `<tag_prefix>-<llama_ref[:7]>-r<recipe commit[:7]>`; the workflow refuses to push if that tag already exists and never pushes a floating tag. `consumed_ref` is the image hal0 uses today; nothing switches to a build from here until a planned bump re-gates it (docs/CONSOLIDATION.md).",
+  "recipes": [
+    {
+      "id": "strix-base",
+      "image": "ghcr.io/hal0ai/hal0-strix-base",
+      "tag_prefix": "rocm-7.2.4-rocmfp4-server",
+      "context": "strix-base",
+      "dockerfile": "strix-base/Dockerfile",
+      "llama_repo": "https://github.com/charlie12345/rocmfp4-llama.git",
+      "llama_ref": "1faa48eefdf1a0eda238e5cde7f69c951eb1a9e9",
+      "consumed_ref": "ghcr.io/hal0ai/amd-strix-halo-toolboxes:rocm-7.2.4-rocmfp4-server@sha256:4f5418c1b1e39e5ad9bbadfd2e8381c6b8a70e9b03f667179a7233c6f681462a",
+      "notes": "Base FROM'd by every runners/* recipe ([base] digest). llama_ref derived from the consumed digest's embedded build-info (strix-base/README.md)."
+    },
+    {
+      "id": "llama-vulkan",
+      "image": "ghcr.io/hal0ai/hal0-llama-vulkan",
+      "tag_prefix": "vulkan-radv-server",
+      "context": "llama-vulkan",
+      "dockerfile": "llama-vulkan/Dockerfile",
+      "llama_repo": "https://github.com/ggml-org/llama.cpp.git",
+      "llama_ref": "c060ca974c773c7c3d17fd1b66dc9d312bc292c0",
+      "consumed_ref": "ghcr.io/hal0ai/amd-strix-halo-toolboxes:vulkan-radv-server",
+      "notes": "hal0 FALLBACK_VULKAN_IMAGE lineage (consumed by floating tag; observed sha256:33004bf0... on 2026-10-04). llama_ref derived from that image's embedded build-info (llama-vulkan/README.md)."
+    }
+  ]
+}
