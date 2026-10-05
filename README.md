@@ -5,16 +5,27 @@ Build sources + digest-pin registry for the container images
 Strix Halo (gfx1151) boxes. Split out of the app repo so heavy/slow GPU-image
 CI is isolated and the supply chain is hal0-owned end to end.
 
-## Model: aggregator, reference-don't-absorb
+## Model: single pipeline
 
-`images.json` is the source of truth for **which** runner images exist. Two
-kinds:
+This repo is the single pipeline for every hal0 toolbox/runner image (see
+`docs/CONSOLIDATION.md`). `images.json` is the source of truth for **which**
+runner images exist (each entry is a hal0 catalogue row). Kinds:
 
-- **owned** — a Dockerfile lives here; `build-matrix.yml` builds + pushes it.
-  `cpu`, `flm`, `kokoro`, `moonshine`, `qwen3tts`, `comfyui`.
-- **referenced** — already a hal0-owned repo with its own CI; pinned here but
-  NOT vendored. `vulkan`, `rocm` (→ `Hal0ai/amd-strix-halo-toolboxes`);
-  `rocmfpx`/`vulkanfpx` (→ `Hal0ai/Hal0_ROCmFPX`). See `external/`.
+- **owned, publish `ci`** — Dockerfile here; `build-matrix.yml` builds +
+  pushes it. Today: `comfyui`.
+- **owned, publish `external`** — recipe here, but the consumed image was
+  published from another lineage and is digest-pinned; CI must not repush it.
+  `cpu`, `flm`, `kokoro`, `moonshine`, `qwen3tts`, and the hand-built
+  runners under `runners/` (`rocmfpx-combined`, `combined-upstream`, `strix`,
+  `promptforge`).
+- **referenced** — source in another hal0 repo, pinned only
+  (`rocmfpx-hy3` → `Hal0ai/Hal0_ROCmFPX`), plus the dead `vulkan`/`rocm`
+  pins that no live builder produces. See `external/`.
+
+`build-recipes.json` lists build targets that are **not** catalogue rows:
+`strix-base/` (the ROCm base every runner recipe FROMs by digest) and
+`llama-vulkan/` (hal0's `FALLBACK_VULKAN_IMAGE` lineage). Both moved here from
+`Hal0ai/amd-strix-halo-toolboxes` with their llama.cpp source pinned to a SHA.
 
 The app keeps consuming `manifest.json`; this repo's CI resolves published
 ghcr digests (`scripts/emit-manifest.sh`) and opens a manifest-bump PR against
@@ -31,27 +42,37 @@ GHCR-only rows when the file fails to parse.
 ## Layout
 
 ```
-images.json                  source of truth (owned + referenced, pins, build info)
-cpu/ flm/ kokoro/            owned runner Dockerfiles (+ context)
+images.json                  catalogue source of truth (owned + referenced, pins, build info)
+build-recipes.json           non-catalogue build targets (strix-base, llama-vulkan)
+cpu/ flm/ kokoro/            owned toolbox Dockerfiles (+ context)
 moonshine/ qwen3tts/
-comfyui/                     NEW hal0-owned ComfyUI (gfx1151 ROCm) + versions.env
+comfyui/                     hal0-owned ComfyUI (gfx1151 ROCm) + versions.env
+strix-base/                  ROCm 7.2.4 + rocmfp4 llama.cpp base (runners' [base])
+llama-vulkan/                llama.cpp Vulkan RADV server (FALLBACK_VULKAN_IMAGE lineage)
+runners/                     hand-built runner recipes: manifest.toml + build.sh + patches
+  rocmfpx/ upstream/ strix/ promptforge/
 external/README.md           referenced sources (not vendored) + how to bump
-scripts/emit-manifest.sh     resolve ghcr digests → patch app manifest.json
-.github/workflows/build-matrix.yml   build+push publish:ci images (comfyui) — BUILD ONLY
-.github/workflows/pin-digests.yml    resolve published digests → bump-PR app manifest (BUILD-FREE)
-docs/PROVENANCE.md           where every source really lives (handoff corrections)
+retention-allowlist.json     refs the GHCR retention sweep must never delete
+scripts/emit-manifest.sh     resolve ghcr digests -> patch app manifest.json
+scripts/retention.py         GHCR retention sweep (dry-run default)
+scripts/test_*.py            stdlib checks: python3 scripts/test_repo_consistency.py
+.github/workflows/build-matrix.yml   dispatch-only builds (publish:ci + build-recipes.json)
+.github/workflows/pin-digests.yml    resolve published digests -> bump-PR app manifest (BUILD-FREE)
+.github/workflows/retention.yml      scheduled retention sweep
+docs/CONSOLIDATION.md        what moved here, and what later phases still owe
+docs/PROVENANCE.md           where every source really lives
 docs/WIRING.md               how the app consumes these images
-docs/comfyui-research-2026-07-19.md   ComfyUI fork survey + decision
 ```
 
-## Status (2026-07-19, initial population)
+## Status
 
 - Owned Dockerfiles present. **kokoro/moonshine were reconstructed** from
   published-image history (their Dockerfiles were never in the app repo) —
   verify a rebuild matches the pinned digest before trusting them as source.
-- **comfyui** is a drafted, hal0-owned single ROCm image replacing third-party
-  kyuz0. `comfyui/versions.env` `*_REF` values are still floating branch names
-  — pin to commit SHAs before a release build.
+- **comfyui** is a hal0-owned single ROCm image replacing third-party kyuz0.
+  `comfyui/versions.env` pins every input: the `*_REF` values are commit SHAs
+  (resolved 2026-07-19), the base is digest-pinned, and the torch triple is a
+  dated nightly.
 - `pin-digests.yml` (the manifest bump) needs the `HAL0_MANIFEST_PR_TOKEN`
   secret (Contents+PR write on Hal0ai/hal0) — already set. Referenced/external
   images build in their own repos; only their digests are re-pinned here.

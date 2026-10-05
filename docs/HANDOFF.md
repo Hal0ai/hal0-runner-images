@@ -72,7 +72,7 @@ source repos (`amd-strix-halo-toolboxes`, `Hal0_ROCmFPX`) publish new builds.
 1. `hal0 doctor toolbox-pull` — asserts anonymous pull of the pinned images
    (comfyui is public; confirmed).
 2. Bring up an `img` slot (`backend=rocm`) and drive one gen against a real
-   checkpoint from `/mnt/ai-models/comfyui/` — the first end-to-end proof the
+   checkpoint from the box's local ComfyUI models directory — the first end-to-end proof the
    app + new image + model mount agree. (Note O25: the renderer mount path bug
    is a separate live fix; don't design around it.)
 3. Optional belt-and-suspenders: `podman pull hal0-comfyui:latest` on a box +

@@ -1,0 +1,44 @@
+# Consolidation: one pipeline for hal0 runner images
+
+Owner decision (2026-10-04): `Hal0ai/hal0-runner-images` is the single
+pipeline for every hal0 toolbox/runner image. Phase 1 (this change) moves the
+recipes. It does not change any consumed image: every digest hal0 pulls today
+stays as it is.
+
+## Moved in phase 1
+
+| here | from | notes |
+|---|---|---|
+| `strix-base/` | fork `toolboxes/Dockerfile.rocm-7.2.4-rocmfp4-server` + `llama-grammar.patch` + `gguf-vram-estimator.py` @ `90c03d4` | llama.cpp pinned to `charlie12345/rocmfp4-llama@1faa48ee`, derived from the consumed base digest (`strix-base/README.md`) |
+| `llama-vulkan/` | fork `toolboxes/Dockerfile.vulkan-radv-server` (+ same two files) | `ggml-org/llama.cpp@c060ca97`, derived from the current `:vulkan-radv-server` digest (`llama-vulkan/README.md`) |
+| `runners/{rocmfpx,upstream,strix,promptforge}/` | hal0 `packaging/runner/*` @ `d2e8791` | pins unchanged; `[base]` still `sha256:4f5418c1…` |
+| `cpu/Dockerfile` | hal0 `packaging/toolbox/cpu.Dockerfile` | re-synced to the CPU-only `GGML_NATIVE=OFF` build (hal0#2126) |
+
+`flm`, `qwen3tts` and the kokoro/moonshine/qwen3tts server files were
+already byte-identical to hal0's copies. `images.json` gained a `strix` entry,
+dropped the false claim that the fork builds `hal0-toolbox-vulkan/rocm`,
+and points the runner entries at `runners/`. `retention-allowlist.json`
+gained the strix and promptforge refs as a local floor.
+
+## Still to do
+
+1. **hal0**: delete `packaging/toolbox/` and `.github/workflows/toolbox.yml`,
+   move `tests/packaging` onto this repo's `runners/`, repoint docs and
+   comments, then delete `packaging/runner/`.
+2. **Fork**: disable the `ghcr-publish.yml` nightly and the other crons, then
+   archive the repo.
+3. **Next planned runner bump**: build `strix-base` here (new package
+   `hal0-strix-base`, new immutable tag), repoint each runner's `[base]`,
+   rebuild under new tags, and re-run the hardware gate before any hal0 pin
+   moves. Pin `cpu`'s `LLAMA_CPP_REF` (still `master`) at the same time.
+4. **Org settings**: grant this repo's workflow write access to the existing
+   `hal0-toolbox-*` packages. Until then those entries stay
+   `publish: external`; flip them to `ci` only after a test push succeeds.
+
+## Rule: never delete the fork's GHCR package
+
+`ghcr.io/hal0ai/amd-strix-halo-toolboxes` must **not** be deleted or pruned,
+even after the fork is archived. Old installs pull
+`:vulkan-radv-server` (hal0 `FALLBACK_VULKAN_IMAGE`), and every runner recipe
+builds `FROM` its `rocm-7.2.4-rocmfp4-server@sha256:4f5418c1…`. CI here
+never pushes to that package.
