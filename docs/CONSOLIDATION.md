@@ -51,6 +51,28 @@ everything else, and each one justifies its existence. What landed:
 - `checks.yml`: the stdlib checks on every PR.
 - `docs/BUMPING.md` and the PR template: the bump and retirement procedure.
 
+## Phase 3: the first real bump (2026-10-08)
+
+Owner decision: this round is not bound by what was built before. Priorities
+are current model availability, popularity, stability and maintainability.
+
+- **Default runner** becomes `runners/upstream`: ggml-org llama.cpp at a
+  tagged release, HIP + Vulkan, on AMD's stable ROCm 10.0 packages for
+  gfx1151 (Fedora 44). Every fork hal0 built from has the same failure
+  shape (one maintainer, squashed snapshot, no upstream merges), and the
+  model support that mattered arrived upstream first.
+- **Default model** becomes `unsloth/Qwen3.8-27B-GGUF` (dense, in-file MTP
+  head, mmproj). Qwen3.8-Flash-Next (110+ GB) stays a supported option on
+  the same runner, not the default.
+- `runners/rocmfpx` is **frozen**: no bumps; it only loads FPX-format GGUFs
+  already on slots until they migrate. `runners/promptforge` is
+  **retiring**: deleted once hal0 drops its pin. `runners/strix` is decided
+  by the gate: kept opt-in only if its Vulkan decode beats the new default
+  by a margin worth a fork.
+- Order: CI build here -> hardware gate on the Strix Halo box -> hal0 PR
+  (new default `Runner`, curated entries, migration rule) -> delete retired
+  recipes here.
+
 ## Rule: never delete the fork's GHCR package
 
 `ghcr.io/hal0ai/amd-strix-halo-toolboxes` must **not** be deleted or pruned,

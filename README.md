@@ -23,7 +23,7 @@ runner images exist (each entry is a hal0 catalogue row). Kinds:
   pins that no live builder produces. See `external/`.
 
 `build-recipes.json` lists build targets that are **not** catalogue rows:
-`strix-base/` (the ROCm base every runner recipe FROMs by digest) and
+`strix-base/` (the ROCm 7.2.4 base the fork recipes FROM by digest; `runners/upstream` builds on Fedora 44 + AMD's stable ROCm 10.0 packages instead) and
 `llama-vulkan/` (hal0's `FALLBACK_VULKAN_IMAGE` lineage). Both moved here from
 `Hal0ai/amd-strix-halo-toolboxes` with their llama.cpp source pinned to a SHA.
 
@@ -50,7 +50,8 @@ comfyui/                     hal0-owned ComfyUI (gfx1151 ROCm) + versions.env
 strix-base/                  ROCm 7.2.4 + rocmfp4 llama.cpp base (runners' [base])
 llama-vulkan/                llama.cpp Vulkan RADV server (FALLBACK_VULKAN_IMAGE lineage)
 runners/                     runner recipes: manifest.toml + build.sh + patches (CI-built)
-  rocmfpx/ upstream/ strix/ promptforge/
+  rocmfpx/ strix/ promptforge/   fork recipes (generated Containerfile via rocmfpx/build.sh)
+  upstream/                      ggml-org llama.cpp on ROCm 10.0 + Vulkan: tracked Containerfile
 external/README.md           referenced sources (not vendored) + how to bump
 retention-allowlist.json     refs the GHCR retention sweep must never delete
 scripts/emit-manifest.sh     resolve ghcr digests -> patch app manifest.json
