@@ -1,6 +1,6 @@
 {
   "schema": "hal0.runner-images.v1",
-  "_comment": "Source of truth for hal0 runner images. TWO orthogonal axes: (1) `ownership` = does the Dockerfile live in THIS repo (owned) or in an upstream repo we only pin (referenced); (2) `publish` = who builds+pushes the canonical image. publish values: 'ci' = THIS repo's build-matrix.yml builds+pushes it (only comfyui today; future new owned images e.g. vibevoice); 'external' = Dockerfile is archived here for provenance/reproducibility, but the canonical published image comes from another lineage \u2014 CI must NOT rebuild/repush it (would 403 on the pre-existing org package and/or overwrite the canonical artifact), we only pin its digest; 'manual' = referenced source repo builds it, pin only. The plan job builds ONLY publish=='ci'. scripts/emit-manifest.sh resolves the published ghcr digest for EVERY image with a manifest_key and PRs it into Hal0ai/hal0 manifest.json \u2014 independent of publish. rocmfpx/vulkanfpx use an app-side pin (DEFAULT_ROCMFPX_IMAGE, schema.py) rather than manifest.json.toolbox_images. Hand-built runner recipes live in runners/ (build.sh + manifest.toml; publish 'external' = built on the build host, never by CI). Non-runner build targets (the strix base, the Vulkan server) are NOT catalogue rows and live in build-recipes.json, because every entry here becomes a slot-selectable row in hal0's Runner Images page. SCHEMA NOTE: `images` is an ARRAY (hal0's runner-image sync \u2014 src/hal0/registry/runner_image_sync.py \u2014 requires a list); each entry carries its short name in `id`. RUNTIME METADATA (Hal0ai/hal0 feat/catalogue-runtime-metadata): `runtime_family` = the runtime the image's entrypoint serves, same vocabulary as hal0's RuntimeFamily (src/hal0/runners/__init__.py); `supported_backends` = backends the runner binary can execute, same semantics as Runner.supported_backends (metadata, not a selector). hal0's sync merges both onto catalogue rows so the slot drawer's catalogued-pin lane stops assuming every row is llama-server.",
+  "_comment": "Source of truth for hal0 runner images. TWO orthogonal axes: (1) `ownership` = does the Dockerfile live in THIS repo (owned) or in an upstream repo we only pin (referenced); (2) `publish` = who builds+pushes the canonical image. publish values: 'ci' = THIS repo's build-matrix.yml builds+pushes it (comfyui and, since 2026-10-08 when this repo was granted write access to the packages, cpu/flm/kokoro/moonshine/qwen3tts). A CI build pushes one immutable `<tag>-r<commit>` tag; only an entry with moving_tag=true (comfyui) also moves its `tag`, so CI never moves a tag hal0 pulls; 'external' = Dockerfile is archived here for provenance/reproducibility, but the canonical published image comes from another lineage \u2014 CI must NOT rebuild/repush it (would 403 on the pre-existing org package and/or overwrite the canonical artifact), we only pin its digest; 'manual' = referenced source repo builds it, pin only. The plan job builds ONLY publish=='ci'. scripts/emit-manifest.sh resolves the published ghcr digest for EVERY image with a manifest_key and PRs it into Hal0ai/hal0 manifest.json \u2014 independent of publish. rocmfpx/vulkanfpx use an app-side pin (DEFAULT_ROCMFPX_IMAGE, schema.py) rather than manifest.json.toolbox_images. Hand-built runner recipes live in runners/ (build.sh + manifest.toml; publish 'external' = built on the build host, never by CI). Non-runner build targets (the strix base, the Vulkan server) are NOT catalogue rows and live in build-recipes.json, because every entry here becomes a slot-selectable row in hal0's Runner Images page. SCHEMA NOTE: `images` is an ARRAY (hal0's runner-image sync \u2014 src/hal0/registry/runner_image_sync.py \u2014 requires a list); each entry carries its short name in `id`. RUNTIME METADATA (Hal0ai/hal0 feat/catalogue-runtime-metadata): `runtime_family` = the runtime the image's entrypoint serves, same vocabulary as hal0's RuntimeFamily (src/hal0/runners/__init__.py); `supported_backends` = backends the runner binary can execute, same semantics as Runner.supported_backends (metadata, not a selector). hal0's sync merges both onto catalogue rows so the slot drawer's catalogued-pin lane stops assuming every row is llama-server.",
   "images": [
     {
       "id": "cpu",
@@ -8,7 +8,7 @@
       "tag": "v1",
       "manifest_key": "cpu",
       "ownership": "owned",
-      "publish": "external",
+      "publish": "ci",
       "runtime_family": "llama-server",
       "supported_backends": [
         "cpu"
@@ -28,7 +28,7 @@
       "tag": "0.9.44",
       "manifest_key": "flm",
       "ownership": "owned",
-      "publish": "external",
+      "publish": "ci",
       "runtime_family": "flm",
       "supported_backends": [
         "npu"
@@ -48,7 +48,7 @@
       "tag": "v1",
       "manifest_key": "kokoro",
       "ownership": "owned",
-      "publish": "external",
+      "publish": "ci",
       "runtime_family": "kokoro",
       "supported_backends": [
         "cpu"
@@ -68,7 +68,7 @@
       "tag": "v1",
       "manifest_key": "moonshine",
       "ownership": "owned",
-      "publish": "external",
+      "publish": "ci",
       "runtime_family": "moonshine",
       "supported_backends": [
         "cpu"
@@ -88,7 +88,7 @@
       "tag": "v1",
       "manifest_key": "qwen3tts",
       "ownership": "owned",
-      "publish": "external",
+      "publish": "ci",
       "runtime_family": "qwen3tts",
       "supported_backends": [
         "rocm"
@@ -123,7 +123,8 @@
         ],
         "build_args_from": "comfyui/versions.env"
       },
-      "notes": "NEW hal0-owned ComfyUI (gfx1151 ROCm). Replaces third-party docker.io/kyuz0/amd-strix-halo-comfyui. Single ROCm image \u2014 no vulkan variant (see comfyui/README.md). All build inputs pinned 2026-07-19: fedora base by digest, torch triple by dated nightly (cp313 @ 20260501), ComfyUI + 3 nodes by commit SHA. SMOKE-TESTED on gfx1151: builds, ROCm torch sees Radeon 8060S; ComfyUI 0.28.0 detects Total VRAM 118784 MB (~116 GiB GTT, native, NORMAL_VRAM) + gfx1151 + ROCm 7.13. Remaining before publish: push :latest + digest-pin in app manifest."
+      "notes": "NEW hal0-owned ComfyUI (gfx1151 ROCm). Replaces third-party docker.io/kyuz0/amd-strix-halo-comfyui. Single ROCm image \u2014 no vulkan variant (see comfyui/README.md). All build inputs pinned 2026-07-19: fedora base by digest, torch triple by dated nightly (cp313 @ 20260501), ComfyUI + 3 nodes by commit SHA. SMOKE-TESTED on gfx1151: builds, ROCm torch sees Radeon 8060S; ComfyUI 0.28.0 detects Total VRAM 118784 MB (~116 GiB GTT, native, NORMAL_VRAM) + gfx1151 + ROCm 7.13. Remaining before publish: push :latest + digest-pin in app manifest.",
+      "moving_tag": true
     },
     {
       "id": "vulkan",
