@@ -31,8 +31,9 @@ Alerts mean the pin is at risk, not just old:
 
 - **pin gone**: the pinned commit no longer exists upstream. Rebuilds must
   use the source mirror (below).
-- **diverged** or **branch behind**: the branch was force-pushed or reset
-  and no longer contains the pin.
+- **diverged** or **branch behind**: the branch does not contain the pin.
+  Either it was force-pushed or reset, or `track_ref` names a branch the pin
+  was never on: check which before acting.
 - **branch gone**: the tracked branch was deleted or renamed. Update
   `track_ref` or treat the fork as abandoned.
 - **unknown**: the API did not answer. Re-run the workflow; it is not a

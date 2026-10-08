@@ -103,8 +103,8 @@ def classify(t: Target, compare: dict | None, pin_code: int | None = None,
         return Row(t, f"{ahead} new", False, f"{ahead} commit(s) on `{t.branch}` since the pin", link)
     if status == "diverged":
         return Row(t, "diverged", True,
-                   f"`{t.branch}` no longer contains the pin ({ahead} ahead, {behind} behind): "
-                   "history was rewritten", link)
+                   f"`{t.branch}` does not contain the pin ({ahead} ahead, {behind} behind): "
+                   "the branch was rewritten, or track_ref names the wrong branch", link)
     if status == "behind":
         return Row(t, "branch behind", True,
                    f"`{t.branch}` is {behind} commit(s) behind the pin: the branch was reset", link)

@@ -219,7 +219,11 @@ needed_for = [
     "jcbtc/Qwen3.8-27B-CIRU-ActiveFPX-PromptForge (ActiveFPX kernels, MTP depth 4)",
 ]
 retire_when = "The ActiveFPX kernels land in charlie12345/ROCmFPX or upstream llama.cpp, or the PromptForge model leaves the hal0 catalogue."
-track_ref = "refs/heads/main"
+#: The pin is the tip of ciru-ai's release branch for this card, not of
+#: main (a different lineage: 10k+ commits apart). A newer PromptForge
+#: release arrives as a new tag/branch, which this watch does not see;
+#: the card is the source of truth for that.
+track_ref = "refs/heads/release/qwen3.8-activefpx-promptforge-v1"
 
 [ci]
 #: Push target for CI builds (build-matrix.yml, `only=runners/promptforge`). A new
