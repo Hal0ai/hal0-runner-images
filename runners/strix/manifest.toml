@@ -144,10 +144,11 @@ submodules = false
 #:     ../rocmfpx/build.sh, a cross-recipe edit this image does not need.
 #:   * LLAMA_BUILD_TESTS stays off (build.sh builds the four runtime
 #:     targets only; the flag would configure test targets nothing builds).
-#: GGML_NATIVE=ON matches the reference and specializes for the BUILD
-#: host's CPU: the build must run on the strix-halo-class build host. If the
-#: build host ever stops matching the fleet's CPU family, flip this OFF —
-#: a mismatched -march is the #2126 SIGILL class at model load.
+#: The consumed :0831 image was built with GGML_NATIVE=ON on a
+#: strix-halo-class build host. The recipe now names the Zen 5 ISA
+#: explicitly (see cmake_flags) so it builds the same CPU code on any
+#: x86-64 machine, CI included; a mismatched -march is the #2126 SIGILL
+#: class at model load.
 #: gpu_arch kept for provenance symmetry (the Vulkan backend compiles
 #: SPIR-V, not per-arch code objects; nothing consumes it at configure).
 gpu_arch = "gfx1151"
@@ -156,7 +157,21 @@ cmake_flags = [
     "-DGGML_HIP=OFF",
     "-DGGML_VULKAN=ON",
     "-DGGML_CUDA=OFF",
-    "-DGGML_NATIVE=ON",
+    # Explicit Zen 5 (Strix Halo CPU) ISA instead of GGML_NATIVE=ON, so the
+    # CPU code no longer depends on which machine compiles it. GitHub-hosted
+    # runners are a mix of Intel and AMD parts; NATIVE there is the #2126
+    # SIGILL class. A rebuild under these flags is a new digest and only
+    # lands through a planned bump with a fresh hardware gate.
+    "-DGGML_NATIVE=OFF",
+    "-DGGML_AVX=ON",
+    "-DGGML_AVX2=ON",
+    "-DGGML_FMA=ON",
+    "-DGGML_F16C=ON",
+    "-DGGML_BMI2=ON",
+    "-DGGML_AVX512=ON",
+    "-DGGML_AVX512_VBMI=ON",
+    "-DGGML_AVX512_VNNI=ON",
+    "-DGGML_AVX512_BF16=ON",
     "-DBUILD_SHARED_LIBS=OFF",
     "-DLLAMA_BUILD_SERVER=ON",
     "-DLLAMA_BUILD_WEBUI=OFF",
@@ -166,3 +181,22 @@ cmake_flags = [
 #: No patches. Candidates live in the FEATURE DELTA header block (adaptive
 #: MTP draft sizing, skinny prefill) — add them here with a public PR
 #: reference when one exists, never as blind diffs from the field report.
+
+[lifecycle]
+#: Why this runner exists and when it goes away (docs/BUMPING.md). Every
+#: runner carries this table; scripts/test_repo_consistency.py enforces it.
+#: track_ref is the branch on source.repo the weekly fork watch
+#: (.github/workflows/fork-watch.yml) compares source.ref against.
+purpose = "Optional Vulkan-only runner built from myhacsint's published Strix Halo production tree: NextN/MTP speculative decode, lazy PLE gather and strix-halo FA/MoE-prefill kernels that upstream lacks."
+needed_for = [
+    "Qwen3.8-Flash-Next with a grafted MTP head (adaptive draft sizing)",
+    "strix-halo Vulkan flash-attention and MoE-prefill kernels",
+]
+retire_when = "Upstream llama.cpp ships NextN/MTP speculative decode for qwen4exp, and runners/upstream matches this runner's gated throughput on the same model (margin set at bump time)."
+track_ref = "refs/heads/production/strix-halo-qwen4exp-b10669"
+
+[ci]
+#: Push target for CI builds (build-matrix.yml, `only=runners/strix`). A new
+#: hal0-runner-* package, never the consumed package named in [image]: CI
+#: tags are immutable `<dir>-<ref[:7]>-r<commit[:7]>`.
+image = "ghcr.io/hal0ai/hal0-runner-strix"

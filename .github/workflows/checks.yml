@@ -1,0 +1,22 @@
+name: Checks
+
+# The stdlib consistency checks, on every pull request and push to main.
+# No network beyond checkout, no container runtime, nothing built.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - run: python3 scripts/test_repo_consistency.py
+      - run: python3 scripts/test_retention_fixtures.py
+      - run: python3 scripts/test_fork_watch.py

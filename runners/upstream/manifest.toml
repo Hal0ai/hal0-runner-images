@@ -98,6 +98,21 @@ cmake_flags = [
     "-DGGML_CUDA=OFF",
     "-DCMAKE_HIP_ARCHITECTURES=gfx1151",
     "-DGPU_TARGETS=gfx1151",
+    # Explicit Zen 5 (Strix Halo CPU) ISA. Without GGML_NATIVE=OFF ggml
+    # defaults to -march=native, i.e. whatever CPU compiles it; on a mixed
+    # Intel/AMD GitHub runner that is the #2126 SIGILL class. A rebuild
+    # under these flags is a new digest and only lands through a planned
+    # bump with a fresh hardware gate.
+    "-DGGML_NATIVE=OFF",
+    "-DGGML_AVX=ON",
+    "-DGGML_AVX2=ON",
+    "-DGGML_FMA=ON",
+    "-DGGML_F16C=ON",
+    "-DGGML_BMI2=ON",
+    "-DGGML_AVX512=ON",
+    "-DGGML_AVX512_VBMI=ON",
+    "-DGGML_AVX512_VNNI=ON",
+    "-DGGML_AVX512_BF16=ON",
     "-DLLAMA_BUILD_SERVER=ON",
     "-DLLAMA_BUILD_WEBUI=OFF",
     "-DLLAMA_USE_PREBUILT_WEBUI=OFF",
@@ -106,3 +121,21 @@ cmake_flags = [
 #: No patches — the whole point of this variant. The fork patches target
 #: fork-only gaps (see FEATURE DELTA above); an empty series here is a
 #: statement, not an omission.
+
+[lifecycle]
+#: Why this runner exists and when it goes away (docs/BUMPING.md). Every
+#: runner carries this table; scripts/test_repo_consistency.py enforces it.
+#: track_ref is the branch on source.repo the weekly fork watch
+#: (.github/workflows/fork-watch.yml) compares source.ref against.
+purpose = "Pristine ggml-org llama.cpp for architectures the forks predate (qwen4exp, Qwen3.8-Flash-Next). Reached only through a per-slot image_pin."
+needed_for = [
+    "qwen4exp models (ggml-org #27742, #27880)",
+]
+retire_when = "Kept as a recipe: it is the yardstick every fork's retire_when is tested against. Its consumed :0829 pin retires when runners/strix passes the gate for every qwen4exp slot (hal0 #2118)."
+track_ref = "refs/heads/master"
+
+[ci]
+#: Push target for CI builds (build-matrix.yml, `only=runners/upstream`). A new
+#: hal0-runner-* package, never the consumed package named in [image]: CI
+#: tags are immutable `<dir>-<ref[:7]>-r<commit[:7]>`.
+image = "ghcr.io/hal0ai/hal0-runner-upstream"

@@ -11,7 +11,8 @@
       "llama_repo": "https://github.com/charlie12345/rocmfp4-llama.git",
       "llama_ref": "1faa48eefdf1a0eda238e5cde7f69c951eb1a9e9",
       "consumed_ref": "ghcr.io/hal0ai/amd-strix-halo-toolboxes:rocm-7.2.4-rocmfp4-server@sha256:4f5418c1b1e39e5ad9bbadfd2e8381c6b8a70e9b03f667179a7233c6f681462a",
-      "notes": "Base FROM'd by every runners/* recipe ([base] digest). llama_ref derived from the consumed digest's embedded build-info (strix-base/README.md)."
+      "notes": "Base FROM'd by every runners/* recipe ([base] digest). llama_ref derived from the consumed digest's embedded build-info (strix-base/README.md).",
+      "track_ref": "refs/heads/mtp-rocmfp4-strix"
     },
     {
       "id": "llama-vulkan",
@@ -22,7 +23,8 @@
       "llama_repo": "https://github.com/ggml-org/llama.cpp.git",
       "llama_ref": "c060ca974c773c7c3d17fd1b66dc9d312bc292c0",
       "consumed_ref": "ghcr.io/hal0ai/amd-strix-halo-toolboxes:vulkan-radv-server",
-      "notes": "hal0 FALLBACK_VULKAN_IMAGE lineage (consumed by floating tag; observed sha256:33004bf0... on 2026-10-04). llama_ref derived from that image's embedded build-info (llama-vulkan/README.md)."
+      "notes": "hal0 FALLBACK_VULKAN_IMAGE lineage (consumed by floating tag; observed sha256:33004bf0... on 2026-10-04). llama_ref derived from that image's embedded build-info (llama-vulkan/README.md).",
+      "track_ref": "refs/heads/master"
     }
   ]
 }

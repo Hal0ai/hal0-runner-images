@@ -135,7 +135,21 @@ cmake_flags = [
     "-DGGML_HIP_GRAPHS=ON",
     "-DGGML_HIP_MMQ_MFMA=ON",
     "-DGGML_HIP_NO_VMM=ON",
-    "-DGGML_NATIVE=ON",
+    # Explicit Zen 5 (Strix Halo CPU) ISA instead of GGML_NATIVE=ON, so the
+    # CPU code no longer depends on which machine compiles it. GitHub-hosted
+    # runners are a mix of Intel and AMD parts; NATIVE there is the #2126
+    # SIGILL class. A rebuild under these flags is a new digest and only
+    # lands through a planned bump with a fresh hardware gate.
+    "-DGGML_NATIVE=OFF",
+    "-DGGML_AVX=ON",
+    "-DGGML_AVX2=ON",
+    "-DGGML_FMA=ON",
+    "-DGGML_F16C=ON",
+    "-DGGML_BMI2=ON",
+    "-DGGML_AVX512=ON",
+    "-DGGML_AVX512_VBMI=ON",
+    "-DGGML_AVX512_VNNI=ON",
+    "-DGGML_AVX512_BF16=ON",
     "-DPROMPTFORGE_CK_ROOT=../composable_kernel",
     "-DLLAMA_BUILD_SERVER=ON",
     "-DLLAMA_BUILD_WEBUI=OFF",
@@ -194,3 +208,25 @@ required_probes = [
     "MTP (depth-4) acceptance rate within the card's stated envelope",
 ]
 status = "not run — candidate pin only, pending #1891"
+
+[lifecycle]
+#: Why this runner exists and when it goes away (docs/BUMPING.md). Every
+#: runner carries this table; scripts/test_repo_consistency.py enforces it.
+#: track_ref is the branch on source.repo the weekly fork watch
+#: (.github/workflows/fork-watch.yml) compares source.ref against.
+purpose = "Optional HIP-only runner from ciru-ai's ROCmFPX tree on a TheRock 7.15 nightly: the accelerated path the PromptForge v2.3 model card specifies."
+needed_for = [
+    "jcbtc/Qwen3.8-27B-CIRU-ActiveFPX-PromptForge (ActiveFPX kernels, MTP depth 4)",
+]
+retire_when = "The ActiveFPX kernels land in charlie12345/ROCmFPX or upstream llama.cpp, or the PromptForge model leaves the hal0 catalogue."
+#: The pin is the tip of ciru-ai's release branch for this card, not of
+#: main (a different lineage: 10k+ commits apart). A newer PromptForge
+#: release arrives as a new tag/branch, which this watch does not see;
+#: the card is the source of truth for that.
+track_ref = "refs/heads/release/qwen3.8-activefpx-promptforge-v1"
+
+[ci]
+#: Push target for CI builds (build-matrix.yml, `only=runners/promptforge`). A new
+#: hal0-runner-* package, never the consumed package named in [image]: CI
+#: tags are immutable `<dir>-<ref[:7]>-r<commit[:7]>`.
+image = "ghcr.io/hal0ai/hal0-runner-promptforge"

@@ -25,9 +25,15 @@ patches and entrypoints are unchanged.
 - `./build.sh --check` (git + python3 + network, no container runtime)
   proves the source ref is reachable and the patch series applies. It is
   not a build. `build-matrix.yml` can run it for all four on dispatch.
-- Real builds run on the strix-halo-class build host, not in GitHub CI:
-  the images are large, `strix` builds with `GGML_NATIVE=ON`, and the
-  default tag in each manifest is the tag hal0 consumes today.
+- Real builds run in GitHub CI (`build-matrix.yml`, `only=runners/<dir>`),
+  which pushes an immutable tag to the recipe's `[ci].image`
+  (`ghcr.io/hal0ai/hal0-runner-<dir>`). The Strix Halo box runs only the
+  hardware gate. Every recipe sets `GGML_NATIVE=OFF` and names the Zen 5
+  ISA (ggml otherwise defaults to `-march=native`), so the CPU code no
+  longer depends on the build machine.
+  The default tag in each manifest is still the tag hal0 consumes today.
+- Every recipe carries `[lifecycle]` (why it exists, when it retires, which
+  branch the weekly fork watch tracks). Bumps follow `../docs/BUMPING.md`.
 - Always build under a NEW tag (`./build.sh --tag ghcr.io/hal0ai/<pkg>:<new>`).
   Never push over a consumed tag. A rebuild is a new digest and only lands
   through a planned bump that re-runs the hardware gate.

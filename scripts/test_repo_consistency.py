@@ -131,6 +131,32 @@ def test_runners() -> None:
                   f"runners/{d}/{f}: must symlink to ../rocmfpx/{f}")
 
 
+def test_lifecycle() -> None:
+    """Every runner says why it exists, when it retires, and what to watch."""
+    for d in ("rocmfpx", "upstream", "strix", "promptforge"):
+        doc = tomllib.loads((ROOT / "runners" / d / "manifest.toml").read_text())
+        life = doc.get("lifecycle", {})
+        for key in ("purpose", "retire_when", "track_ref"):
+            check(isinstance(life.get(key), str) and life[key].strip() != "",
+                  f"runners/{d}: [lifecycle].{key} missing or empty")
+        check(isinstance(life.get("needed_for"), list) and len(life["needed_for"]) > 0,
+              f"runners/{d}: [lifecycle].needed_for must list at least one model or feature")
+        check(str(life.get("track_ref", "")).startswith("refs/heads/"),
+              f"runners/{d}: [lifecycle].track_ref must be a refs/heads/ branch")
+        img = doc.get("ci", {}).get("image", "")
+        check(img == f"ghcr.io/hal0ai/hal0-runner-{d}",
+              f"runners/{d}: [ci].image must be ghcr.io/hal0ai/hal0-runner-{d}, got {img!r}")
+        check(img.rsplit("/", 1)[-1] != doc["image"]["tag"].split(":")[0].rsplit("/", 1)[-1],
+              f"runners/{d}: [ci].image must not be the consumed package")
+        flags = doc["build"]["cmake_flags"]
+        check("-DGGML_NATIVE=OFF" in flags and "-DGGML_NATIVE=ON" not in flags,
+              f"runners/{d}: set -DGGML_NATIVE=OFF and name the ISA; ggml defaults to -march=native, "
+              "which ties the CPU code to the build machine (#2126)")
+    for r in load_json("build-recipes.json")["recipes"]:
+        check(str(r.get("track_ref", "")).startswith("refs/heads/"),
+              f"build-recipes.json {r['id']}: track_ref must be a refs/heads/ branch")
+
+
 def test_allowlist() -> None:
     doc = load_json("retention-allowlist.json")
     for ref in doc.get("hal0_code_pins", []) + doc.get("evidence", {}).get("refs", []):
@@ -154,7 +180,8 @@ def test_no_lan_addresses() -> None:
 
 
 def main() -> int:
-    for t in (test_images_json, test_build_recipes, test_runners, test_allowlist, test_no_lan_addresses):
+    for t in (test_images_json, test_build_recipes, test_runners, test_lifecycle, test_allowlist,
+              test_no_lan_addresses):
         before = len(failures)
         t()
         print(f"{'FAIL' if len(failures) > before else 'ok  '} {t.__name__}")
