@@ -47,6 +47,7 @@ RUN git clean -xdf \
   -DLLAMA_BUILD_TESTS=OFF \
   -DLLAMA_BUILD_EXAMPLES=ON \
   -DLLAMA_BUILD_SERVER=ON \
+  -DLLAMA_BUILD_WEBUI=OFF \
   && cmake --build build --config Release \
   && cmake --install build --config Release
 

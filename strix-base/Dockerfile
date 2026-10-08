@@ -34,7 +34,6 @@ RUN dnf -y --nodocs --setopt=install_weak_deps=False \
   rocblas rocblas-devel hipblas hipblas-devel rocm-cmake libomp-devel libomp \
   rocminfo radeontop \
   git-core vim sudo rsync patch \
-  nodejs npm \
   && dnf clean all && rm -rf /var/cache/dnf/*
 
 # rocm env
@@ -69,6 +68,7 @@ RUN git clean -xdf \
   -DCMAKE_BUILD_TYPE=Release \
   -DGGML_RPC=ON \
   -DLLAMA_BUILD_SERVER=ON \
+  -DLLAMA_BUILD_WEBUI=OFF \
   -DLLAMA_BUILD_EXAMPLES=ON \
   -DLLAMA_BUILD_TESTS=OFF \
   -DGGML_BUILD_TESTS=OFF \

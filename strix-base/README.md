@@ -8,7 +8,10 @@ builds `FROM`:
 
 Moved here from `Hal0ai/amd-strix-halo-toolboxes` (`toolboxes/Dockerfile.rocm-7.2.4-rocmfp4-server`,
 `toolboxes/llama-grammar.patch`, `toolboxes/gguf-vram-estimator.py` @ `90c03d4`).
-The only content change is the source clone, which now checks out a pinned SHA.
+Content changes: the source clone now checks out a pinned SHA, and the build
+sets `-DLLAMA_BUILD_WEBUI=OFF` (nodejs/npm dropped with it). hal0 never serves
+llama-server's built-in web page, and the fork's nightly failed on every run
+from 2026-08-17 fetching those assets, after the HIP compile had finished.
 
 ## Source pin and how it was derived
 
