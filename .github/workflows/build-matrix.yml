@@ -19,18 +19,33 @@ name: Build runner images
 # writable by this repo) and would churn their digests. Build deliberately, one
 # or a few images at a time, via `only`. Referenced images (vulkan/rocm/rocmfpx)
 # build in their own repos.
+#
+# CONSOLIDATION (docs/CONSOLIDATION.md): build-recipes.json adds two
+# non-catalogue targets moved from Hal0ai/amd-strix-halo-toolboxes,
+# `strix-base` and `llama-vulkan`. They build ONLY when named in `only` (a
+# blank `only` never selects them: they are long ROCm/Vulkan builds), push to
+# NEW hal0-* packages, and push ONE immutable tag
+# `<tag_prefix>-<llama_ref[:7]>-r<commit[:7]>`; the leg fails before building
+# if that tag already exists, and never pushes a floating tag. The fork's
+# ghcr.io/hal0ai/amd-strix-halo-toolboxes package is never a push target.
+# `recipes_check` runs runners/*/build.sh --check (patch series applies, no
+# container build); real runner builds stay on the strix-halo build host.
 
 on:
   workflow_dispatch:
     inputs:
       only:
-        description: "Comma-separated image keys to build (blank = all publish:ci images, currently just comfyui)"
+        description: "Comma-separated keys: images.json publish:ci ids and/or build-recipes.json ids (strix-base, llama-vulkan). Blank = all publish:ci images (never the build-recipes targets)."
         type: string
         default: "comfyui"
       push:
         description: "Push to ghcr.io (true) or build-only dry-run (false)"
         type: boolean
         default: true
+      recipes_check:
+        description: "Also run runners/*/build.sh --check (source ref reachable + patch series applies; builds nothing)"
+        type: boolean
+        default: false
 
 concurrency:
   group: build-${{ github.ref }}
@@ -47,6 +62,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set.outputs.matrix }}
+      has_images: ${{ steps.set.outputs.has_images }}
+      recipes_matrix: ${{ steps.set.outputs.recipes_matrix }}
+      has_recipes: ${{ steps.set.outputs.has_recipes }}
     steps:
       - uses: actions/checkout@v6
       - id: set
@@ -78,10 +96,28 @@ jobs:
                   "build_args_from": b.get("build_args_from", ""),
               })
           print("matrix=" + json.dumps({"include": legs}))
+          print("has_images=" + ("true" if legs else "false"))
+          # Non-catalogue build targets (build-recipes.json). Selected ONLY
+          # by explicit id in `only`, never by a blank `only`.
+          recipes = json.load(open("build-recipes.json"))["recipes"]
+          rlegs = []
+          for r in recipes:
+              if r["id"] not in only:
+                  continue
+              if not r["image"].startswith("ghcr.io/hal0ai/hal0-"):
+                  sys.exit(f"{r['id']}: refusing non hal0-* push target {r['image']}")
+              rlegs.append({k: r[k] for k in ("id", "image", "tag_prefix", "context", "dockerfile", "llama_ref")})
+          print("recipes_matrix=" + json.dumps({"include": rlegs}))
+          print("has_recipes=" + ("true" if rlegs else "false"))
+          known = {e["id"] for e in doc["images"] if e.get("publish") == "ci"} | {r["id"] for r in recipes}
+          unknown = only - known
+          if unknown:
+              sys.exit(f"unknown or non-buildable key(s) in `only`: {sorted(unknown)}")
           PY
 
   build:
     needs: plan
+    if: needs.plan.outputs.has_images == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     strategy:
@@ -154,3 +190,91 @@ jobs:
           echo "Pushed ${{ matrix.image }}:${{ matrix.tag }}"
           echo "Digest ${{ steps.build.outputs.digest }}"
           echo "To pin it into the app manifest, run the 'Pin runner image digests' workflow."
+
+  # build-recipes.json targets (strix-base, llama-vulkan). Immutable tag only;
+  # refuses to overwrite. See the header note.
+  build-recipe:
+    needs: plan
+    if: needs.plan.outputs.has_recipes == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.plan.outputs.recipes_matrix) }}
+    steps:
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          docker system prune --all --force
+          df -h /
+
+      - uses: actions/checkout@v6
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Compute immutable tag and refuse to overwrite
+        id: tag
+        shell: bash
+        env:
+          IMAGE: ${{ matrix.image }}
+          PREFIX: ${{ matrix.tag_prefix }}
+          LLAMA_REF: ${{ matrix.llama_ref }}
+        run: |
+          set -euo pipefail
+          tag="${PREFIX}-${LLAMA_REF:0:7}-r${GITHUB_SHA:0:7}"
+          ref="${IMAGE}:${tag}"
+          if docker buildx imagetools inspect "$ref" >/dev/null 2>&1; then
+            echo "::error::${ref} already exists; tags from this workflow are immutable. Commit a recipe change (new r<sha>) to build again."
+            exit 1
+          fi
+          echo "ref=${ref}" >> "$GITHUB_OUTPUT"
+          echo "Will build ${ref}"
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: ${{ inputs.push == true }}
+          build-args: |
+            LLAMA_REF=${{ matrix.llama_ref }}
+          tags: ${{ steps.tag.outputs.ref }}
+          labels: |
+            org.opencontainers.image.title=${{ matrix.id }}
+            org.opencontainers.image.source=https://github.com/Hal0ai/hal0-runner-images
+            org.opencontainers.image.revision=${{ github.sha }}
+            dev.hal0.llama.ref=${{ matrix.llama_ref }}
+          platforms: linux/amd64
+          provenance: false
+
+      - name: Report digest
+        if: steps.build.outputs.digest != ''
+        run: |
+          echo "Built ${{ steps.tag.outputs.ref }}"
+          echo "Digest ${{ steps.build.outputs.digest }}"
+          echo "Nothing consumes this yet: adopt it only through a planned bump with a hardware gate."
+
+  # runners/*/build.sh --check: source ref reachable + patch series applies.
+  # No container runtime, no push.
+  runner-recipes-check:
+    if: inputs.recipes_check == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        recipe: [rocmfpx, upstream, strix, promptforge]
+    steps:
+      - uses: actions/checkout@v6
+      - name: build.sh --check
+        env:
+          HAL0_RUNNER_BUILD_DIR: ${{ runner.temp }}/runner-${{ matrix.recipe }}
+        run: bash runners/${{ matrix.recipe }}/build.sh --check

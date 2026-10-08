@@ -1,6 +1,6 @@
 {
   "schema": "hal0.runner-images.v1",
-  "_comment": "Source of truth for hal0 runner images. TWO orthogonal axes: (1) `ownership` = does the Dockerfile live in THIS repo (owned) or in an upstream repo we only pin (referenced); (2) `publish` = who builds+pushes the canonical image. publish values: 'ci' = THIS repo's build-matrix.yml builds+pushes it (only comfyui today; future new owned images e.g. vibevoice); 'external' = Dockerfile is archived here for provenance/reproducibility, but the canonical published image comes from another lineage \u2014 CI must NOT rebuild/repush it (would 403 on the pre-existing org package and/or overwrite the canonical artifact), we only pin its digest; 'manual' = referenced source repo builds it, pin only. The plan job builds ONLY publish=='ci'. scripts/emit-manifest.sh resolves the published ghcr digest for EVERY image with a manifest_key and PRs it into Hal0ai/hal0 manifest.json \u2014 independent of publish. rocmfpx/vulkanfpx use an app-side pin (DEFAULT_ROCMFPX_IMAGE, schema.py) rather than manifest.json.toolbox_images. SCHEMA NOTE: `images` is an ARRAY (hal0's runner-image sync \u2014 src/hal0/registry/runner_image_sync.py \u2014 requires a list); each entry carries its short name in `id`. RUNTIME METADATA (Hal0ai/hal0 feat/catalogue-runtime-metadata): `runtime_family` = the runtime the image's entrypoint serves, same vocabulary as hal0's RuntimeFamily (src/hal0/runners/__init__.py); `supported_backends` = backends the runner binary can execute, same semantics as Runner.supported_backends (metadata, not a selector). hal0's sync merges both onto catalogue rows so the slot drawer's catalogued-pin lane stops assuming every row is llama-server.",
+  "_comment": "Source of truth for hal0 runner images. TWO orthogonal axes: (1) `ownership` = does the Dockerfile live in THIS repo (owned) or in an upstream repo we only pin (referenced); (2) `publish` = who builds+pushes the canonical image. publish values: 'ci' = THIS repo's build-matrix.yml builds+pushes it (only comfyui today; future new owned images e.g. vibevoice); 'external' = Dockerfile is archived here for provenance/reproducibility, but the canonical published image comes from another lineage \u2014 CI must NOT rebuild/repush it (would 403 on the pre-existing org package and/or overwrite the canonical artifact), we only pin its digest; 'manual' = referenced source repo builds it, pin only. The plan job builds ONLY publish=='ci'. scripts/emit-manifest.sh resolves the published ghcr digest for EVERY image with a manifest_key and PRs it into Hal0ai/hal0 manifest.json \u2014 independent of publish. rocmfpx/vulkanfpx use an app-side pin (DEFAULT_ROCMFPX_IMAGE, schema.py) rather than manifest.json.toolbox_images. Hand-built runner recipes live in runners/ (build.sh + manifest.toml; publish 'external' = built on the build host, never by CI). Non-runner build targets (the strix base, the Vulkan server) are NOT catalogue rows and live in build-recipes.json, because every entry here becomes a slot-selectable row in hal0's Runner Images page. SCHEMA NOTE: `images` is an ARRAY (hal0's runner-image sync \u2014 src/hal0/registry/runner_image_sync.py \u2014 requires a list); each entry carries its short name in `id`. RUNTIME METADATA (Hal0ai/hal0 feat/catalogue-runtime-metadata): `runtime_family` = the runtime the image's entrypoint serves, same vocabulary as hal0's RuntimeFamily (src/hal0/runners/__init__.py); `supported_backends` = backends the runner binary can execute, same semantics as Runner.supported_backends (metadata, not a selector). hal0's sync merges both onto catalogue rows so the slot drawer's catalogued-pin lane stops assuming every row is llama-server.",
   "images": [
     {
       "id": "cpu",
@@ -20,7 +20,7 @@
           "linux/amd64"
         ]
       },
-      "notes": "llama.cpp CPU/Vulkan fallback. Self-contained (clones llama.cpp in builder). Migrated as-is from app repo; BUILD-VERIFIED 2026-07-19 (builds clean on 143)."
+      "notes": "llama.cpp CPU-only build (GGML_VULKAN/CUDA/HIP=OFF, GGML_NATIVE=OFF so the binary is portable across x86_64 instead of tuned to the builder; hal0#2126 \u2014 the `cpu` runner previously carried the Vulkan GPU toolbox and SIGILLed on GPU-less boxes). cpu/Dockerfile is synced byte-for-byte from Hal0ai/hal0 packaging/toolbox/cpu.Dockerfile (2026-10-04); the consumed :v1 digest is pinned in hal0 manifest.json toolbox_images.cpu and was published by hal0's toolbox.yml. LLAMA_CPP_REF still defaults to master (unpinned), so only the digest makes the shipped build reproducible; pin it before the next rebuild."
     },
     {
       "id": "flm",
@@ -40,7 +40,7 @@
           "linux/amd64"
         ]
       },
-      "notes": "FastFlowLM v0.9.44 on AMD XDNA2 NPU. FLM_REF build-arg controls upstream tag. Migrated as-is from app repo; BUILD-VERIFIED 2026-07-19 (full XRT+Rust+FastFlowLM build completes clean on 143; runtime needs the NPU)."
+      "notes": "FastFlowLM v0.9.44 on AMD XDNA2 NPU. FLM_REF build-arg controls upstream tag. Migrated as-is from app repo; BUILD-VERIFIED 2026-07-19 (full XRT+Rust+FastFlowLM build completes clean on the build host; runtime needs the NPU)."
     },
     {
       "id": "kokoro",
@@ -100,7 +100,7 @@
           "linux/amd64"
         ]
       },
-      "notes": "Qwen3-TTS multilingual GPU TTS (ROCm). Migrated as-is from app repo packaging/toolbox. BUILD-VERIFIED 2026-07-19 (builds clean on 143; runtime needs GPU+model)."
+      "notes": "Qwen3-TTS multilingual GPU TTS (ROCm). Migrated as-is from app repo packaging/toolbox. BUILD-VERIFIED 2026-07-19 (builds clean on the build host; runtime needs GPU+model)."
     },
     {
       "id": "comfyui",
@@ -123,7 +123,7 @@
         ],
         "build_args_from": "comfyui/versions.env"
       },
-      "notes": "NEW hal0-owned ComfyUI (gfx1151 ROCm). Replaces third-party docker.io/kyuz0/amd-strix-halo-comfyui. Single ROCm image \u2014 no vulkan variant (see comfyui/README.md). All build inputs pinned 2026-07-19: fedora base by digest, torch triple by dated nightly (cp313 @ 20260501), ComfyUI + 3 nodes by commit SHA. SMOKE-TESTED on gfx1151 (143): builds, ROCm torch sees Radeon 8060S; ComfyUI 0.28.0 detects Total VRAM 118784 MB (~116 GiB GTT, native, NORMAL_VRAM) + gfx1151 + ROCm 7.13. Remaining before publish: push :latest + digest-pin in app manifest."
+      "notes": "NEW hal0-owned ComfyUI (gfx1151 ROCm). Replaces third-party docker.io/kyuz0/amd-strix-halo-comfyui. Single ROCm image \u2014 no vulkan variant (see comfyui/README.md). All build inputs pinned 2026-07-19: fedora base by digest, torch triple by dated nightly (cp313 @ 20260501), ComfyUI + 3 nodes by commit SHA. SMOKE-TESTED on gfx1151: builds, ROCm torch sees Radeon 8060S; ComfyUI 0.28.0 detects Total VRAM 118784 MB (~116 GiB GTT, native, NORMAL_VRAM) + gfx1151 + ROCm 7.13. Remaining before publish: push :latest + digest-pin in app manifest."
     },
     {
       "id": "vulkan",
@@ -139,9 +139,10 @@
       "build": {
         "source_repo": "https://github.com/Hal0ai/amd-strix-halo-toolboxes",
         "ref": "main",
-        "dockerfile": "toolboxes/Dockerfile.vulkan-radv"
+        "dockerfile": "toolboxes/Dockerfile.vulkan-radv",
+        "live_builder": null
       },
-      "notes": "llama.cpp Vulkan backend (default Strix Halo iGPU). Built + published by amd-strix-halo-toolboxes' own CI (.github/workflows/build_and_publish.yml). NOT vendored here \u2014 pin only."
+      "notes": "Legacy per-backend llama.cpp Vulkan toolbox. NO LIVE BUILDER: amd-strix-halo-toolboxes' build_and_publish.yml targets kyuz0's Docker Hub and its ghcr-publish.yml pushes only ghcr.io/hal0ai/amd-strix-halo-toolboxes:*-server, never hal0-toolbox-vulkan. Dead pin: hal0 manifest.json toolbox_images.vulkan still carries a digest, but no runner resolves it (hal0 src/hal0/runners/__init__.py keeps rocmfpx off the vulkan/rocm manifest keys on purpose). The fork's live Vulkan server recipe (FALLBACK_VULKAN_IMAGE lineage) now lives in llama-vulkan/ here. build.dockerfile records the historical source path only."
     },
     {
       "id": "rocm",
@@ -157,9 +158,10 @@
       "build": {
         "source_repo": "https://github.com/Hal0ai/amd-strix-halo-toolboxes",
         "ref": "main",
-        "dockerfile": "toolboxes/Dockerfile.rocm-7.2.4"
+        "dockerfile": "toolboxes/Dockerfile.rocm-7.2.4",
+        "live_builder": null
       },
-      "notes": "llama.cpp ROCm backend, multi-arch gfx1030..gfx1151. Built by amd-strix-halo-toolboxes CI. NOT vendored here."
+      "notes": "Legacy per-backend llama.cpp ROCm toolbox (multi-arch gfx1030..gfx1151). NO LIVE BUILDER: nothing in amd-strix-halo-toolboxes (or anywhere else) publishes hal0-toolbox-rocm. Dead pin: hal0 manifest.json toolbox_images.rocm still carries a digest, but no runner resolves it. GPU boxes run rocmfpx-combined (runners/rocmfpx here). build.dockerfile records the historical source path only."
     },
     {
       "id": "rocmfpx-combined",
@@ -171,7 +173,11 @@
         "rocm",
         "vulkan"
       ],
-      "notes": "Canonical ROCmFPX+Vulkan combined runner (llama-server). Built from Hal0ai/hal0 packaging/runner/rocmfpx/build.sh; tag pinned app-side (DEFAULT_ROCMFPX_IMAGE). No pinned tag here on purpose: the hal0 catalogue tracks tags/list so fresh pushes surface on sync."
+      "notes": "Canonical ROCmFPX+Vulkan combined runner (llama-server). Recipe: runners/rocmfpx/ here (moved from Hal0ai/hal0 packaging/runner/rocmfpx/); hand-built on the build host with build.sh, not by CI. Tag pinned app-side (DEFAULT_ROCMFPX_IMAGE = :0826). No pinned tag here on purpose: the hal0 catalogue tracks tags/list so fresh pushes surface on sync.",
+      "build": {
+        "recipe": "runners/rocmfpx/manifest.toml",
+        "build_script": "runners/rocmfpx/build.sh"
+      }
     },
     {
       "id": "combined-upstream",
@@ -183,7 +189,11 @@
         "rocm",
         "vulkan"
       ],
-      "notes": "Pristine-upstream llama.cpp variant of the combined runner (adds qwen4exp / Qwen3.8-Flash-Next; lacks ROCmFPX quant formats and the MiniCPM5/LFM2.5 patches). Built from Hal0ai/hal0 packaging/runner/upstream/build.sh; wire to slots ONLY via per-slot image_pin, never as the default. Temporary: retire per Hal0ai/hal0#2118 once ROCmFPX syncs qwen4exp."
+      "notes": "Pristine-upstream llama.cpp variant of the combined runner (adds qwen4exp / Qwen3.8-Flash-Next; lacks ROCmFPX quant formats and the MiniCPM5/LFM2.5 patches). Recipe: runners/upstream/ here (moved from Hal0ai/hal0 packaging/runner/upstream/); wire to slots ONLY via per-slot image_pin, never as the default. Temporary: retire per Hal0ai/hal0#2118 once ROCmFPX syncs qwen4exp.",
+      "build": {
+        "recipe": "runners/upstream/manifest.toml",
+        "build_script": "runners/upstream/build.sh"
+      }
     },
     {
       "id": "rocmfpx-hy3",
@@ -205,7 +215,7 @@
         "build_script": "scripts/build-strix-rocmfp4-mtp.sh",
         "builder_base": "localhost/hal0-rocmfpx-builder:7.2.4"
       },
-      "notes": "Hy3 variant of the FPX runner: adds IFP2 (ggml type107) + minicpm5 + the hy_v3 NextN/MTP patch so Hy3-Chadrock-FPX-IFP2-MTP loads. Built 2026-07-14 on CT105; was local-only until pushed to ghcr 2026-07-19. Both floating tag :ifp2-hyv3-mtp and digest-named :ifp2-hyv3-d7e1f26 share manifest sha256:dbb443fc\u2026 (config/image id 57aaafb773b1). Builder toolchain localhost/hal0-rocmfpx-builder:7.2.4 (may or may not be pushed). Referenced, digest-pinned; app follow-up: repin [profile.hy3-fpx] from :ifp2-hyv3-mtp to the digest. hy3 slot enabled=false (91GB weights can't co-reside with agent slot on 128GB)."
+      "notes": "Hy3 variant of the FPX runner: adds IFP2 (ggml type107) + minicpm5 + the hy_v3 NextN/MTP patch so Hy3-Chadrock-FPX-IFP2-MTP loads. Built 2026-07-14 on the former build host; was local-only until pushed to ghcr 2026-07-19. Both floating tag :ifp2-hyv3-mtp and digest-named :ifp2-hyv3-d7e1f26 share manifest sha256:dbb443fc\u2026 (config/image id 57aaafb773b1). Builder toolchain localhost/hal0-rocmfpx-builder:7.2.4 (may or may not be pushed). Referenced, digest-pinned; app follow-up: repin [profile.hy3-fpx] from :ifp2-hyv3-mtp to the digest. hy3 slot enabled=false (91GB weights can't co-reside with agent slot on 128GB)."
     },
     {
       "id": "promptforge",
@@ -213,10 +223,10 @@
       "image": "ghcr.io/hal0ai/hal0-promptforge",
       "tag": "v2.3-qwen38",
       "digest": "sha256:370af6e9717e8c96742198a4b920888e6a248d447e21e3432de4d2c913703aea",
-      "manifest_key": null,
-      "app_pin": "DEFAULT_PROMPTFORGE_IMAGE (src/hal0/config/schema.py) \u2014 CANDIDATE until the ct150 validation gate (hal0#1891) passes; gate procedure staged 2026-08-30",
-      "ownership": "referenced",
-      "publish": "manual",
+      "manifest_key": "promptforge",
+      "app_pin": "DEFAULT_PROMPTFORGE_IMAGE (src/hal0/config/schema.py) + manifest.json toolbox_images.promptforge (same digest); gate hal0#1891 passed 2026-08-30",
+      "ownership": "owned",
+      "publish": "external",
       "runtime_family": "llama-server",
       "supported_backends": [
         "rocm"
@@ -224,10 +234,34 @@
       "build": {
         "source_repo": "https://github.com/ciru-ai/ROCmFPX",
         "ref": "103af8b411dfe47fe9110a480a02341137c68246",
-        "build_script": "packaging/runner/promptforge/build.sh in Hal0ai/hal0 (manifest.toml is the tracked recipe; Containerfiles generated)",
-        "builder_base": "registry.fedoraproject.org/fedora-minimal:43@sha256:64d7765c1c6af97ff168d112eee06731676ad32bd5a8fc15d97cfd938ad4e281 + TheRock 7.15.0a20260728 gfx1151 dist tarball (no pullable TheRock runtime container exists)"
+        "build_script": "runners/promptforge/build.sh (runners/promptforge/manifest.toml is the tracked recipe; Containerfiles generated)",
+        "builder_base": "registry.fedoraproject.org/fedora-minimal:43@sha256:64d7765c1c6af97ff168d112eee06731676ad32bd5a8fc15d97cfd938ad4e281 + TheRock 7.15.0a20260728 gfx1151 dist tarball (no pullable TheRock runtime container exists)",
+        "recipe": "runners/promptforge/manifest.toml"
       },
-      "notes": "Accelerated HIP-only runner (GGML_VULKAN=OFF) for jcbtc/Qwen3.8-27B-CIRU-ActiveFPX-PromptForge \u2014 mutually exclusive with hal0-combined, never the general default. ciru-ai tree (ciru's gfx1151 Vulkan defect never executes in a HIP-only build) + the card's 627-line Output-K8 runtime patch. Built on CT130 via the tracked app-repo recipe (Gitea lane: build-promptforge.yml in the -dev sidecar); manifest_key stays null until the #1891 gate passes, then manifest.json.toolbox_images.promptforge is re-added with the real digest (it was deliberately removed \u2014 release-check fails on null digest)."
+      "notes": "Accelerated HIP-only runner (GGML_VULKAN=OFF) for jcbtc/Qwen3.8-27B-CIRU-ActiveFPX-PromptForge \u2014 OPTIONAL, mutually exclusive with hal0-combined, never the general default. ciru-ai tree (ciru's gfx1151 Vulkan defect never executes in a HIP-only build) + the card's 627-line Output-K8 runtime patch. Recipe: runners/promptforge/ here (moved from Hal0ai/hal0 packaging/runner/promptforge/), hand-built on the build host. Gate hal0#1891 passed 2026-08-30 on this digest; hal0 manifest.json toolbox_images.promptforge pins it, so manifest_key is set."
+    },
+    {
+      "id": "strix",
+      "display_name": "Strix (Qwen3.8-Flash-Next + MTP, Vulkan-only)",
+      "image": "ghcr.io/hal0ai/hal0-strix-vulkan",
+      "tag": "0831",
+      "digest": "sha256:b50a73487d05bcae146aa54170cec981c7c6a158cc5cd1fa45a6096dfc5fe107",
+      "manifest_key": "strix",
+      "app_pin": "DEFAULT_STRIX_IMAGE (src/hal0/config/schema.py) + manifest.json toolbox_images.strix (same digest); gate 2026-08-31 passed",
+      "ownership": "owned",
+      "publish": "external",
+      "runtime_family": "llama-server",
+      "supported_backends": [
+        "vulkan"
+      ],
+      "build": {
+        "recipe": "runners/strix/manifest.toml",
+        "build_script": "runners/strix/build.sh (symlink to runners/rocmfpx/build.sh)",
+        "source_repo": "https://github.com/myhacsint/llama.cpp",
+        "ref": "5d43efe26f68249eb74e93ee1abd05f984dcb133",
+        "builder_base": "ghcr.io/hal0ai/amd-strix-halo-toolboxes:rocm-7.2.4-rocmfp4-server@sha256:4f5418c1b1e39e5ad9bbadfd2e8381c6b8a70e9b03f667179a7233c6f681462a"
+      },
+      "notes": "Vulkan-only (GGML_HIP=OFF) llama-server from the r/StrixHalo production snapshot (myhacsint/llama.cpp @ 5d43efe26): qwen4exp + NextN/MTP (--spec-type draft-mtp, adaptive) + --tensor-read-lazy. OPTIONAL runner, never the AMD default; successor to the combined-upstream :0829 pin for qwen4exp (hal0#2118). No FPX-family quant support. Digest is the image the 2026-08-31 gate validated on a kfd-present and a kfd-absent box. GGML_NATIVE=ON: build only on a strix-halo-class host, never in GitHub CI. A rebuild is a new digest and needs a new gate."
     }
   ]
 }

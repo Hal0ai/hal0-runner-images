@@ -36,11 +36,15 @@ Already `manifest_key`-mapped. This repo's `build-matrix.yml` builds them and
 
 ## Referenced (vulkan/rocm/rocmfpx)
 
-- `vulkan`/`rocm`: built by `Hal0ai/amd-strix-halo-toolboxes` CI; app pins
-  `manifest.json.toolbox_images.{vulkan,rocm}` digests (emit-manifest re-pins).
+- `vulkan`/`rocm`: NO live builder (not built by
+  `Hal0ai/amd-strix-halo-toolboxes`, whose GHCR workflow pushes only
+  `amd-strix-halo-toolboxes:*-server`). `manifest.json.toolbox_images.{vulkan,rocm}`
+  are dead pins that no hal0 runner resolves.
 - `rocmfpx`/`vulkanfpx`: app pins `DEFAULT_ROCMFPX_IMAGE`
-  (`src/hal0/config/schema.py:875`), NOT manifest.json. Bump that constant by
-  hand when `Hal0ai/Hal0_ROCmFPX` publishes a new tag.
+  (`src/hal0/config/schema.py`, currently `hal0-combined:0826`), NOT
+  manifest.json. Recipe: `../runners/rocmfpx/`. `strix` and `promptforge`
+  have both an app constant and a `manifest.json` digest; recipes in
+  `../runners/`. Bump the constants by hand after a gated rebuild.
 
 ## Follow-ups for the app-repo owner (cc-web owns rework/descar CI)
 

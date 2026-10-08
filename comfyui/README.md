@@ -37,7 +37,7 @@ the baseline, not a freeze.
 
 ## Smoke-tested on gfx1151 (2026-07-19)
 
-Built + run on a real Strix Halo box (143). Results:
+Built + run on a real Strix Halo box. Results:
 - Builds clean (29 steps).
 - ROCm torch `2.9.1+rocm7.13.0a20260501` loads, `torch.cuda.is_available()`
   True, device = **Radeon 8060S Graphics** (gfx1151 iGPU).

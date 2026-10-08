@@ -1,19 +1,28 @@
 # Referenced (not vendored) runner sources
 
-Decision 2026-07-19: **reference, don't absorb.** These runner images are
+Decision 2026-07-19: **reference, don't absorb** — superseded 2026-10-04 for
+the amd-strix-halo-toolboxes recipes (now in this repo); still the rule for
+Hal0_ROCmFPX. These runner images are
 already hal0-owned GitHub forks with their own working CI. This repo pins them
 in `../images.json` but does NOT copy their source — that would duplicate two
 live repos and compete with their `upstream-sync` workflow. To rebuild/bump,
 work in the source repo; then run `../scripts/emit-manifest.sh` to re-pin.
 
-## amd-strix-halo-toolboxes → `vulkan`, `rocm` (+ the rocmfpx builder base)
+## amd-strix-halo-toolboxes — recipes MOVED here (2026-10-04)
 
 - Repo: https://github.com/Hal0ai/amd-strix-halo-toolboxes (fork of kyuz0/amd-strix-halo-toolboxes)
-- Builds + pushes via its own `.github/workflows/build_and_publish.yml` + `ghcr-publish.yml`; `upstream-sync.yml` tracks kyuz0.
-- Dockerfiles: `toolboxes/Dockerfile.vulkan-radv`, `toolboxes/Dockerfile.rocm-7.2.4`,
-  `toolboxes/Dockerfile.rocm-7.2.4-rocmfp4-server` (the rocmfpx builder base), plus
-  `toolboxes/hip-rocm7rc.patch`, `toolboxes/llama-grammar.patch`.
-- App pins: `manifest.json.toolbox_images.{vulkan,rocm}` (tag `v1`).
+- The two images hal0 still consumes from it now have their canonical recipe
+  in this repo, with llama.cpp pinned to a SHA instead of a branch:
+  - `rocm-7.2.4-rocmfp4-server` (the `[base]` of every `../runners/*` recipe) → `../strix-base/`
+  - `vulkan-radv-server` (hal0 `FALLBACK_VULKAN_IMAGE`) → `../llama-vulkan/`
+- The fork's GHCR package `ghcr.io/hal0ai/amd-strix-halo-toolboxes` must
+  **NOT** be deleted: old installs and the runners' pinned base digest
+  `sha256:4f5418c1…` pull from it. Its crons are to be disabled and the
+  repo archived in a later phase (`../docs/CONSOLIDATION.md`).
+- `hal0-toolbox-vulkan:v1` / `hal0-toolbox-rocm:v1` are **not** built by the
+  fork (its `build_and_publish.yml` targets kyuz0's Docker Hub; its
+  `ghcr-publish.yml` pushes only `amd-strix-halo-toolboxes:*-server`). They
+  have no live builder; their hal0 `manifest.json` entries are dead pins.
 
 ## Hal0_ROCmFPX → `rocmfpx` / `vulkanfpx`
 
