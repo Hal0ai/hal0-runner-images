@@ -127,6 +127,13 @@ probes = [
     "resident memory at the shipped default context; headroom for the brain slot + TTS/STT",
     "unsloth/Qwen3.8-Flash-Next-GGUF UD-Q4_K_XL + MTP/ sidecar (-md) loads (the large-model option)",
     "response_format json_schema from the hal0 tool manifest -> 200 (patch 0001)",
+    # The brain family ran on runners/rocmfpx for its patches 0001/0002/0004.
+    # At b11510 upstream has the minicpm5 pretokenizer (src/llama-vocab.cpp)
+    # and its own LFM2 parser (common/parsers/lfm2.cpp); whether they cover
+    # the hal0 #2056 think-block case is what these two probes decide. Pass =
+    # the brain slot moves here too; fail = brain slots keep binary=rocmfpx.
+    "lfm2.5-2.6b: response_format json_object AND json_schema -> 200, thinking kwarg absent/true/false (hal0 #2056)",
+    "hal0-brain-sft minicpm5 (plain GGUF, not the rocmfpx quant): native tool_calls on both lanes",
     "zero devices mapped -> readable diagnostic, exit 78 (#1936); doomed model -> exit 64 (#2037)",
 ]
 
