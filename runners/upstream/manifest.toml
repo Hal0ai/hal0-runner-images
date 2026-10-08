@@ -33,7 +33,8 @@
 #   * base: strix-base ROCm 7.2.4 digest -> Fedora 44 + ROCm 10.0.0-4
 #   * image definition: shared heredoc build.sh -> tracked Containerfile
 #   * patches: none -> 0001 grammar repetition threshold (see [[patches]])
-#   * cmake: -DGGML_RPC=OFF, -DLLAMA_BUILD_TESTS=OFF, Zen 5 ISA explicit
+#   * cmake: -DGGML_RPC=OFF, -DLLAMA_BUILD_TESTS=OFF, Zen 5 ISA explicit,
+#     LLAMA_BUILD_UI / LLAMA_USE_PREBUILT_UI (upstream's current names) OFF
 
 [image]
 #: What hal0 consumes TODAY (per-slot image_pin only). Unchanged by this
@@ -100,8 +101,16 @@ cmake_flags = [
     "-DGGML_AVX512_VNNI=ON",
     "-DGGML_AVX512_BF16=ON",
     "-DLLAMA_BUILD_SERVER=ON",
-    "-DLLAMA_BUILD_WEBUI=OFF",
-    "-DLLAMA_USE_PREBUILT_WEBUI=OFF",
+    # Upstream renamed these from LLAMA_BUILD_WEBUI / LLAMA_USE_PREBUILT_WEBUI
+    # (the spelling the fork recipes still use). At b11510 the old names are
+    # only a deprecated alias (tools/ui/CMakeLists.txt forwards them), so a
+    # later release can drop them silently. LLAMA_BUILD_UI defaults OFF;
+    # LLAMA_USE_PREBUILT_UI defaults ON and fetches a UI bundle from Hugging
+    # Face when the UI is built. Both off: the web UI is not used and the
+    # build fetches nothing but the pinned source.
+    # scripts/test_repo_consistency.py checks these names.
+    "-DLLAMA_BUILD_UI=OFF",
+    "-DLLAMA_USE_PREBUILT_UI=OFF",
     "-DLLAMA_BUILD_TESTS=OFF",
     "-DGGML_BUILD_TESTS=OFF",
     "-DLLAMA_BUILD_EXAMPLES=OFF",
