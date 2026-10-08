@@ -35,6 +35,22 @@ gained the strix and promptforge refs as a local floor.
    `hal0-toolbox-*` packages. Until then those entries stay
    `publish: external`; flip them to `ci` only after a test push succeeds.
 
+## Phase 2: boutique runners (2026-10-08)
+
+Owner decision: the `runners/*` recipes build in this repo's CI like
+everything else, and each one justifies its existence. What landed:
+
+- `[lifecycle]` (purpose, needed_for, retire_when, track_ref) and `[ci]`
+  (push target) in every runner manifest, enforced by
+  `scripts/test_repo_consistency.py`.
+- `build-matrix.yml` `only=runners/<dir>`: the recipe's own `build.sh`,
+  immutable tags under `ghcr.io/hal0ai/hal0-runner-<dir>`, plus GHCR copies
+  of the pinned source and the TheRock tarball.
+- `fork-watch.yml`: weekly compare of every pin with its branch, reported on
+  one tracking issue.
+- `checks.yml`: the stdlib checks on every PR.
+- `docs/BUMPING.md` and the PR template: the bump and retirement procedure.
+
 ## Rule: never delete the fork's GHCR package
 
 `ghcr.io/hal0ai/amd-strix-halo-toolboxes` must **not** be deleted or pruned,

@@ -49,14 +49,18 @@ moonshine/ qwen3tts/
 comfyui/                     hal0-owned ComfyUI (gfx1151 ROCm) + versions.env
 strix-base/                  ROCm 7.2.4 + rocmfp4 llama.cpp base (runners' [base])
 llama-vulkan/                llama.cpp Vulkan RADV server (FALLBACK_VULKAN_IMAGE lineage)
-runners/                     hand-built runner recipes: manifest.toml + build.sh + patches
+runners/                     runner recipes: manifest.toml + build.sh + patches (CI-built)
   rocmfpx/ upstream/ strix/ promptforge/
 external/README.md           referenced sources (not vendored) + how to bump
 retention-allowlist.json     refs the GHCR retention sweep must never delete
 scripts/emit-manifest.sh     resolve ghcr digests -> patch app manifest.json
 scripts/retention.py         GHCR retention sweep (dry-run default)
 scripts/test_*.py            stdlib checks: python3 scripts/test_repo_consistency.py
-.github/workflows/build-matrix.yml   dispatch-only builds (publish:ci + build-recipes.json)
+scripts/fork_watch.py        weekly pin-vs-branch report (fork-watch.yml)
+docs/BUMPING.md              how a runner is bumped or retired
+.github/workflows/build-matrix.yml   dispatch-only builds (publish:ci + build-recipes.json + runners/<dir>)
+.github/workflows/fork-watch.yml     weekly pin-vs-branch report on one tracking issue (builds nothing)
+.github/workflows/checks.yml         stdlib checks on every PR
 .github/workflows/pin-digests.yml    resolve published digests -> bump-PR app manifest (BUILD-FREE)
 .github/workflows/retention.yml      scheduled retention sweep
 docs/CONSOLIDATION.md        what moved here, and what later phases still owe

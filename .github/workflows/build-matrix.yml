@@ -29,13 +29,22 @@ name: Build runner images
 # if that tag already exists, and never pushes a floating tag. The fork's
 # ghcr.io/hal0ai/amd-strix-halo-toolboxes package is never a push target.
 # `recipes_check` runs runners/*/build.sh --check (patch series applies, no
-# container build); real runner builds stay on the strix-halo build host.
+# container build).
+#
+# RUNNERS (docs/BUMPING.md): `only=runners/<dir>` builds that recipe with its
+# own build.sh on a GitHub-hosted runner and pushes ONE immutable tag
+# `<dir>-<source.ref[:7]>-r<commit[:7]>` to the recipe's [ci].image (a NEW
+# ghcr.io/hal0ai/hal0-runner-* package, never the consumed one). With
+# push=true it also keeps a GHCR copy of the pinned source (git bundle) and,
+# for promptforge, of the sha256-pinned TheRock tarball, so a deleted fork or
+# an expired AMD nightly cannot strand a pin. Nothing consumes a CI build
+# until a planned bump re-runs the hardware gate.
 
 on:
   workflow_dispatch:
     inputs:
       only:
-        description: "Comma-separated keys: images.json publish:ci ids and/or build-recipes.json ids (strix-base, llama-vulkan). Blank = all publish:ci images (never the build-recipes targets)."
+        description: "Comma-separated keys: images.json publish:ci ids, build-recipes.json ids (strix-base, llama-vulkan) and/or runners/<dir> (runners/rocmfpx, runners/upstream, runners/strix, runners/promptforge). Blank = all publish:ci images only."
         type: string
         default: "comfyui"
       push:
@@ -65,13 +74,15 @@ jobs:
       has_images: ${{ steps.set.outputs.has_images }}
       recipes_matrix: ${{ steps.set.outputs.recipes_matrix }}
       has_recipes: ${{ steps.set.outputs.has_recipes }}
+      runners_matrix: ${{ steps.set.outputs.runners_matrix }}
+      has_runners: ${{ steps.set.outputs.has_runners }}
     steps:
       - uses: actions/checkout@v6
       - id: set
         shell: bash
         run: |
           python3 - "${{ github.event.inputs.only }}" <<'PY' >> "$GITHUB_OUTPUT"
-          import json, os, sys
+          import json, os, sys, tomllib
           only = {s.strip() for s in (sys.argv[1] or "").split(",") if s.strip()}
           doc = json.load(open("images.json"))
           legs = []
@@ -109,7 +120,22 @@ jobs:
               rlegs.append({k: r[k] for k in ("id", "image", "tag_prefix", "context", "dockerfile", "llama_ref")})
           print("recipes_matrix=" + json.dumps({"include": rlegs}))
           print("has_recipes=" + ("true" if rlegs else "false"))
-          known = {e["id"] for e in doc["images"] if e.get("publish") == "ci"} | {r["id"] for r in recipes}
+          # runners/<dir> recipes. Selected ONLY by explicit key.
+          runner_dirs = ("rocmfpx", "upstream", "strix", "promptforge")
+          ulegs = []
+          for d in runner_dirs:
+              if f"runners/{d}" not in only:
+                  continue
+              m = tomllib.load(open(f"runners/{d}/manifest.toml", "rb"))
+              img = m["ci"]["image"]
+              if not img.startswith("ghcr.io/hal0ai/hal0-runner-"):
+                  sys.exit(f"runners/{d}: refusing non hal0-runner-* push target {img}")
+              ulegs.append({"dir": d, "image": img, "ref": m["source"]["ref"],
+                            "therock": "true" if "therock" in m["base"] else "false"})
+          print("runners_matrix=" + json.dumps({"include": ulegs}))
+          print("has_runners=" + ("true" if ulegs else "false"))
+          known = ({e["id"] for e in doc["images"] if e.get("publish") == "ci"} | {r["id"] for r in recipes}
+                   | {f"runners/{d}" for d in runner_dirs})
           unknown = only - known
           if unknown:
               sys.exit(f"unknown or non-buildable key(s) in `only`: {sorted(unknown)}")
@@ -261,6 +287,126 @@ jobs:
           echo "Built ${{ steps.tag.outputs.ref }}"
           echo "Digest ${{ steps.build.outputs.digest }}"
           echo "Nothing consumes this yet: adopt it only through a planned bump with a hardware gate."
+
+  # runners/<dir>: the recipe's own build.sh, then push under an immutable
+  # tag. See the header note and docs/BUMPING.md.
+  build-runner:
+    needs: plan
+    if: needs.plan.outputs.has_runners == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.plan.outputs.runners_matrix) }}
+    env:
+      SOURCE_MIRROR: ghcr.io/hal0ai/hal0-source-mirror
+      THEROCK_MIRROR: ghcr.io/hal0ai/hal0-therock-mirror
+    steps:
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /usr/local/share/boost
+          docker system prune --all --force
+          df -h /
+
+      - uses: actions/checkout@v6
+
+      # Job-level env cannot read the runner context, so the scratch dir
+      # build.sh uses ($WORK) is exported here.
+      - name: Set build dir
+        run: echo "HAL0_RUNNER_BUILD_DIR=${RUNNER_TEMP}/runner-${{ matrix.dir }}" >> "$GITHUB_ENV"
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: oras-project/setup-oras@v1
+
+      - name: Compute immutable tag and refuse to overwrite
+        id: tag
+        shell: bash
+        env:
+          IMAGE: ${{ matrix.image }}
+          DIR: ${{ matrix.dir }}
+          REF: ${{ matrix.ref }}
+        run: |
+          set -euo pipefail
+          tag="${DIR}-${REF:0:7}-r${GITHUB_SHA:0:7}"
+          ref="${IMAGE}:${tag}"
+          if docker buildx imagetools inspect "$ref" >/dev/null 2>&1; then
+            echo "::error::${ref} already exists; tags from this workflow are immutable. Commit a recipe change (new r<sha>) to build again."
+            exit 1
+          fi
+          echo "ref=${ref}" >> "$GITHUB_OUTPUT"
+          echo "Will build ${ref}"
+
+      # promptforge only: reuse the mirrored TheRock tarball when one exists.
+      # build.sh verifies the manifest sha256 either way, so a bad mirror
+      # fails the build rather than reaching the image.
+      - name: Restore TheRock tarball from the mirror
+        if: matrix.therock == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver="$(python3 -c 'import sys,tomllib;print(tomllib.load(open(sys.argv[1],"rb"))["base"]["rocm_version"])' "runners/${{ matrix.dir }}/manifest.toml")"
+          mkdir -p "$HAL0_RUNNER_BUILD_DIR"
+          if oras pull "${THEROCK_MIRROR}:${ver}" -o "$HAL0_RUNNER_BUILD_DIR"; then
+            echo "restored TheRock ${ver} from ${THEROCK_MIRROR}"
+          else
+            echo "no mirror copy of TheRock ${ver} yet; build.sh fetches it from AMD"
+          fi
+
+      - name: build.sh
+        run: JOBS="$(nproc)" bash runners/${{ matrix.dir }}/build.sh --tag "${{ steps.tag.outputs.ref }}"
+
+      - name: Push
+        if: inputs.push == true
+        run: |
+          docker push "${{ steps.tag.outputs.ref }}"
+          echo "Pushed ${{ steps.tag.outputs.ref }}"
+          echo "Digest $(docker image inspect --format '{{index .RepoDigests 0}}' "${{ steps.tag.outputs.ref }}")"
+          echo "Nothing consumes this yet: adopt it only through a planned bump with a hardware gate."
+
+      # A GHCR copy of the pinned source, so the pin survives the fork being
+      # deleted or force-pushed. One bundle per (recipe, source.ref).
+      - name: Mirror the pinned source
+        if: inputs.push == true
+        shell: bash
+        env:
+          DIR: ${{ matrix.dir }}
+          REF: ${{ matrix.ref }}
+        run: |
+          set -euo pipefail
+          dest="${SOURCE_MIRROR}:${DIR}-${REF}"
+          if oras manifest fetch "$dest" >/dev/null 2>&1; then
+            echo "source already mirrored at ${dest}"; exit 0
+          fi
+          repo="$(python3 -c 'import sys,tomllib;print(tomllib.load(open(sys.argv[1],"rb"))["source"]["repo"])' "runners/${DIR}/manifest.toml")"
+          src="$HAL0_RUNNER_BUILD_DIR/src"
+          git -C "$src" branch -f hal0-pin "$REF"
+          git -C "$src" bundle create "$RUNNER_TEMP/source.bundle" hal0-pin
+          git -C "$src" bundle verify "$RUNNER_TEMP/source.bundle"
+          (cd "$RUNNER_TEMP" && oras push "$dest" \
+            --annotation "org.opencontainers.image.source=${repo}" \
+            --annotation "org.opencontainers.image.revision=${REF}" \
+            source.bundle:application/x-git-bundle)
+          echo "mirrored source to ${dest}"
+
+      - name: Mirror the TheRock tarball
+        if: inputs.push == true && matrix.therock == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          read -r ver url <<<"$(python3 -c 'import sys,tomllib;b=tomllib.load(open(sys.argv[1],"rb"))["base"];print(b["rocm_version"], b["therock"]["url"])' "runners/${{ matrix.dir }}/manifest.toml")"
+          dest="${THEROCK_MIRROR}:${ver}"
+          if oras manifest fetch "$dest" >/dev/null 2>&1; then
+            echo "TheRock ${ver} already mirrored"; exit 0
+          fi
+          name="$(basename "$url")"
+          (cd "$HAL0_RUNNER_BUILD_DIR" && oras push "$dest" "${name}:application/gzip")
+          echo "mirrored TheRock ${ver} to ${dest}"
 
   # runners/*/build.sh --check: source ref reachable + patch series applies.
   # No container runtime, no push.

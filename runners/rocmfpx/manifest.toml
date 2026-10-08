@@ -188,3 +188,23 @@ probes = [
     "response_format json_object AND json_schema -> 200 on the seeded brain model, thinking kwarg absent/true/false (#2056)",
     "doomed model with devices present -> exit 64 fail-fast (#2037)",
 ]
+
+[lifecycle]
+#: Why this runner exists and when it goes away (docs/BUMPING.md). Every
+#: runner carries this table; scripts/test_repo_consistency.py enforces it.
+#: track_ref is the branch on source.repo the weekly fork watch
+#: (.github/workflows/fork-watch.yml) compares source.ref against.
+purpose = "Default ROCm + Vulkan runner (hal0 DEFAULT_ROCMFPX_IMAGE). charlie12345's ROCmFPX port, chosen because its Vulkan backend is correct on gfx1151 where ciru-ai's port is not (#1888)."
+needed_for = [
+    "ROCmFPX / ROCmI4 / IU4 quant GGUFs (hal0-brain-sft-*-rocmfpx, ROCmFP4 models)",
+    "minicpm5 pretokenizer and tool-call parser (patches 0001, 0002)",
+    "lfm2.5 response-format grammar (patch 0004)",
+]
+retire_when = "Upstream llama.cpp loads the FPX-family quant formats, and the brain-family models pass the hardware gate on runners/upstream without patches 0001, 0002 and 0004."
+track_ref = "refs/heads/main"
+
+[ci]
+#: Push target for CI builds (build-matrix.yml, `only=runners/rocmfpx`). A new
+#: hal0-runner-* package, never the consumed package named in [image]: CI
+#: tags are immutable `<dir>-<ref[:7]>-r<commit[:7]>`.
+image = "ghcr.io/hal0ai/hal0-runner-rocmfpx"
