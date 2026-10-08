@@ -156,6 +156,11 @@ EOF
 "$RUNTIME" run --rm --entrypoint bash -v "${SRC}:/src:z" -w /src \
     -e JOBS="${JOBS:-6}" "$BUILDER" -c "
 set -e
+# The bind-mounted tree is owned by the host user, not the container's root;
+# without this git refuses it as \"dubious ownership\" and llama.cpp's
+# build-info embeds no commit, which is the provenance a later rebuild is
+# checked against (strix-base/README.md).
+git config --global --add safe.directory /src 2>/dev/null || true
 export HIPCXX=\"\$(hipconfig -l)/clang\"
 export HIP_PATH=\"\$(hipconfig -R)\"
 cmake -S . -B build $(printf '%s ' "${CMAKE_FLAGS[@]}")

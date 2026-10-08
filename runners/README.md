@@ -28,8 +28,9 @@ patches and entrypoints are unchanged.
 - Real builds run in GitHub CI (`build-matrix.yml`, `only=runners/<dir>`),
   which pushes an immutable tag to the recipe's `[ci].image`
   (`ghcr.io/hal0ai/hal0-runner-<dir>`). The Strix Halo box runs only the
-  hardware gate. `strix` and `promptforge` name the Zen 5 ISA instead of
-  `GGML_NATIVE=ON`, so the CPU code no longer depends on the build machine.
+  hardware gate. Every recipe sets `GGML_NATIVE=OFF` and names the Zen 5
+  ISA (ggml otherwise defaults to `-march=native`), so the CPU code no
+  longer depends on the build machine.
   The default tag in each manifest is still the tag hal0 consumes today.
 - Every recipe carries `[lifecycle]` (why it exists, when it retires, which
   branch the weekly fork watch tracks). Bumps follow `../docs/BUMPING.md`.

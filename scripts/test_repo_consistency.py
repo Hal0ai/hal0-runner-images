@@ -149,8 +149,9 @@ def test_lifecycle() -> None:
         check(img.rsplit("/", 1)[-1] != doc["image"]["tag"].split(":")[0].rsplit("/", 1)[-1],
               f"runners/{d}: [ci].image must not be the consumed package")
         flags = doc["build"]["cmake_flags"]
-        check("-DGGML_NATIVE=ON" not in flags,
-              f"runners/{d}: GGML_NATIVE=ON ties the CPU code to the build machine (#2126); name the ISA")
+        check("-DGGML_NATIVE=OFF" in flags and "-DGGML_NATIVE=ON" not in flags,
+              f"runners/{d}: set -DGGML_NATIVE=OFF and name the ISA; ggml defaults to -march=native, "
+              "which ties the CPU code to the build machine (#2126)")
     for r in load_json("build-recipes.json")["recipes"]:
         check(str(r.get("track_ref", "")).startswith("refs/heads/"),
               f"build-recipes.json {r['id']}: track_ref must be a refs/heads/ branch")

@@ -237,6 +237,8 @@ echo "==> composable_kernel at ${CK_HEAD}"
     -v "${SRC}:/src:z" -v "${CK}:/composable_kernel:z" -w /src \
     -e JOBS="${JOBS:-6}" "$BUILDER" -c "
 set -e
+# See ../rocmfpx/build.sh: keeps llama.cpp's build-info commit.
+git config --global --add safe.directory /src 2>/dev/null || true
 export ROCM_PATH=/opt/rocm
 cmake -S . -B build \
   -DCMAKE_C_COMPILER=\"\$ROCM_PATH/llvm/bin/clang\" \

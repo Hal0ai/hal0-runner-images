@@ -358,8 +358,23 @@ jobs:
             echo "no mirror copy of TheRock ${ver} yet; build.sh fetches it from AMD"
           fi
 
+      # A hosted runner has 4 vCPUs and 16 GB. One hipcc job can take 3-4 GB,
+      # and with JOBS=nproc plus the Vulkan shader generator the rocmfpx build
+      # ran out of memory ("Cannot allocate memory" / glslc "Failed to fork
+      # process"). Add swap and run half as many jobs.
+      - name: Add swap
+        run: |
+          sudo swapoff -a || true
+          sudo fallocate -l 16G /mnt/hal0-swap
+          sudo chmod 600 /mnt/hal0-swap
+          sudo mkswap /mnt/hal0-swap
+          sudo swapon /mnt/hal0-swap
+          free -h
+
       - name: build.sh
-        run: JOBS="$(nproc)" bash runners/${{ matrix.dir }}/build.sh --tag "${{ steps.tag.outputs.ref }}"
+        run: |
+          jobs=$(( $(nproc) / 2 )); (( jobs >= 1 )) || jobs=1
+          JOBS="$jobs" bash runners/${{ matrix.dir }}/build.sh --tag "${{ steps.tag.outputs.ref }}"
 
       - name: Push
         if: inputs.push == true
