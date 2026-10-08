@@ -1,0 +1,111 @@
+# hal0 runner image: pristine ggml-org llama.cpp, HIP + Vulkan, on AMD's
+# stable ROCm 10.0 packages for gfx1151 (Strix Halo). Fedora 44.
+#
+# The recipe is manifest.toml; build.sh reads it and passes every variable
+# below as --build-arg, after cloning the pinned source into ./src and
+# applying the patch series on the host (so `build.sh --check` can validate
+# the series with no container runtime). This file is tracked rather than
+# generated: the rocmfpx recipe's heredoc Containerfile was the stated
+# "invert the tradeoff if it bites twice" and the ROCm 10 package layout is
+# different enough that sharing its build.sh would be a third copy of the
+# same bash interpolation.
+#
+# Stages:
+#   toolchain  Fedora 44 + ROCm 10.0 devel + Vulkan SDK bits (no source)
+#   builder    cmake configure + build of ./src
+#   runtime    fedora-minimal 44 + ROCm 10.0 runtime + RADV, binaries only
+#
+# Every FROM is pinned by digest; the ROCm packages are pinned to an exact
+# NEVR. A floating tag or `amdrocm10.0-gfx1151` metapackage would make a
+# rebuild a different image with nothing in the diff to show for it.
+
+ARG FEDORA_BUILDER=registry.fedoraproject.org/fedora:44@sha256:ba35579e107f26a4c2c000390fb3ff549f3858a9584a6b5a35f7fa51f54de309
+ARG FEDORA_RUNTIME=registry.fedoraproject.org/fedora-minimal:44@sha256:1c7fa3a02fe2e75df3785978ae98a3f69440c3285337302b8072b042b529a5ab
+
+# ---------------------------------------------------------------- toolchain
+FROM ${FEDORA_BUILDER} AS toolchain
+ARG ROCM_REPO=https://stable.repo.amd.com/rocm/core/packages/rhel10/x86_64
+ARG ROCM_GPG=https://stable.repo.amd.com/rocm/gpg/packages.gpg
+ARG ROCM_SERIES=10.0
+ARG ROCM_NEVR=10.0.0-4
+RUN printf '[amdrocm-stable]\nname=AMD ROCm stable\nbaseurl=%s\nenabled=1\npriority=50\ngpgcheck=1\ngpgkey=%s\n' \
+      "${ROCM_REPO}" "${ROCM_GPG}" > /etc/yum.repos.d/rocm.repo
+# amdrocm-core-devel<series>-gfx1151 is AMD's devel metapackage for this GPU:
+# HIP, the LLVM toolchain, hipBLAS/rocBLAS devel. The Vulkan backend needs
+# the loader headers plus glslc for the shader generator.
+RUN dnf -y --nodocs --setopt=install_weak_deps=False install \
+      make gcc gcc-c++ cmake ninja-build git-core patch libcurl-devel \
+      vulkan-headers vulkan-loader-devel glslc glslang spirv-headers-devel \
+      "amdrocm-core-devel${ROCM_SERIES}-gfx1151-${ROCM_NEVR}" \
+    && dnf clean all && rm -rf /var/cache/dnf/*
+ENV ROCM_PATH=/opt/rocm \
+    HIP_PATH=/opt/rocm \
+    PATH=/opt/rocm/bin:/opt/rocm/core/bin:/opt/rocm/core/lib/llvm/bin:/usr/local/bin:/usr/bin:/bin \
+    LD_LIBRARY_PATH=/opt/rocm/core/lib/rocm_sysdeps/lib:/opt/rocm/core/lib
+
+# ------------------------------------------------------------------ builder
+FROM toolchain AS builder
+ARG CMAKE_FLAGS
+ARG JOBS=4
+COPY src/ /src/
+WORKDIR /src
+# The source dir is COPYed, so git sees a tree owned by root here; still,
+# mark it safe so build-info embeds the commit (provenance a later rebuild
+# is checked against).
+RUN git config --global --add safe.directory /src \
+    && cmake -S . -B build ${CMAKE_FLAGS} \
+    && cmake --build build -j "${JOBS}" --target llama-server llama-cli llama-bench llama-quantize
+
+# ------------------------------------------------------------------ runtime
+FROM ${FEDORA_RUNTIME} AS runtime
+ARG ROCM_REPO=https://stable.repo.amd.com/rocm/core/packages/rhel10/x86_64
+ARG ROCM_GPG=https://stable.repo.amd.com/rocm/gpg/packages.gpg
+ARG ROCM_SERIES=10.0
+ARG ROCM_NEVR=10.0.0-4
+RUN printf '[amdrocm-stable]\nname=AMD ROCm stable\nbaseurl=%s\nenabled=1\npriority=50\ngpgcheck=1\ngpgkey=%s\n' \
+      "${ROCM_REPO}" "${ROCM_GPG}" > /etc/yum.repos.d/rocm.repo
+# Runtime only: amdrocm-runtime (HIP, HSA, comgr; pulls the LLVM runtime it
+# needs) and the gfx1151 BLAS kernels (rocBLAS/hipBLAS + their deps). NOT
+# the amdrocm<series>-gfx1151 metapackage, which adds MIOpen, FFT, RCCL,
+# decode/jpeg and the SMI stack this binary never loads. mesa-vulkan-drivers
+# is the RADV lane; curl is the entrypoint's /health probe.
+RUN microdnf -y --nodocs --setopt=install_weak_deps=0 install \
+      bash ca-certificates curl procps-ng libatomic libstdc++ libgcc libgomp \
+      mesa-vulkan-drivers vulkan-loader \
+      "amdrocm-runtime${ROCM_SERIES}-${ROCM_NEVR}" \
+      "amdrocm-blas${ROCM_SERIES}-gfx1151-${ROCM_NEVR}" \
+    && microdnf clean all && rm -rf /var/cache/dnf/* \
+    && ln -sfn "core-${ROCM_SERIES}" /opt/rocm/core \
+    && ln -sfn core/bin /opt/rocm/bin \
+    && ln -sfn core/lib /opt/rocm/lib \
+    && ln -sfn core/share /opt/rocm/share \
+    && ln -sfn core/lib/llvm /opt/rocm/llvm
+# Same layout the other runners ship, so hal0's bench harness (absolute
+# /opt/rocmfpx/bin/llama-bench) and the shared entrypoint work unchanged.
+COPY --from=builder /src/build/bin/ /opt/rocmfpx/bin/
+COPY hal0-runner-entrypoint.sh /opt/rocmfpx/hal0-runner-entrypoint.sh
+RUN chmod +x /opt/rocmfpx/hal0-runner-entrypoint.sh
+ENV ROCM_PATH=/opt/rocm \
+    HIP_PATH=/opt/rocm \
+    PATH=/opt/rocm/bin:/usr/local/bin:/usr/bin:/bin \
+    LD_LIBRARY_PATH=/opt/rocmfpx/bin:/opt/rocm/core/lib:/opt/rocm/core/lib/rocm_sysdeps/lib \
+    HSA_OVERRIDE_GFX_VERSION=11.5.1 \
+    GGML_HIP_ENABLE_UNIFIED_MEMORY=1
+# Global ARGs are not visible inside a stage unless redeclared.
+ARG FEDORA_RUNTIME
+ARG SOURCE_REPO
+ARG SOURCE_REF
+ARG RECIPE_DIR
+ARG RECIPE_REV
+ARG PATCHES
+ARG PATCHES_SHA256
+LABEL org.opencontainers.image.source="${SOURCE_REPO}" \
+      org.opencontainers.image.revision="${SOURCE_REF}" \
+      org.opencontainers.image.base.name="${FEDORA_RUNTIME}" \
+      dev.hal0.runner.recipe="${RECIPE_DIR}" \
+      dev.hal0.recipe.revision="${RECIPE_REV}" \
+      dev.hal0.runner.rocm="${ROCM_SERIES} (${ROCM_NEVR})" \
+      dev.hal0.runner.patches="${PATCHES}" \
+      dev.hal0.runner.patches.sha256="${PATCHES_SHA256}"
+EXPOSE 8080
+ENTRYPOINT ["/opt/rocmfpx/hal0-runner-entrypoint.sh"]

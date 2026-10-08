@@ -11,8 +11,9 @@ Checks that need no network and no container runtime:
     (src/hal0/runners/__init__.py).
   * build-recipes.json llama_ref == each Dockerfile's ARG LLAMA_REF default,
     and no recipe clones a moving branch.
-  * runners/* manifests parse; the llama-server recipes FROM the consumed
-    strix base digest; shared build.sh/entrypoint.sh symlinks are intact.
+  * runners/* manifests parse; the fork recipes FROM the consumed strix
+    base digest; shared build.sh/entrypoint.sh symlinks are intact; the
+    upstream recipe's tracked Containerfile matches its manifest.
   * retention-allowlist.json refs parse.
   * no private LAN addresses in tracked text files.
 """
@@ -121,14 +122,59 @@ def test_runners() -> None:
               f"runners/{d}: missing canonical-home note")
         for p in doc.get("patches", []):
             check((rdir / "patches" / p["file"]).is_file(), f"runners/{d}: patch {p['file']} missing")
+        if d == "upstream":
+            # Its own base (Fedora + ROCm 10 packages); test_upstream_containerfile
+            # checks it. No other recipe may opt out of the strix-base rule.
+            continue
         if d != "promptforge":
             check(doc["base"]["image"].startswith(base_img) and doc["base"]["digest"] == base_digest,
                   f"runners/{d}: [base] must stay on the consumed strix base digest")
-    for d in ("upstream", "strix"):
-        for f in ("build.sh", "entrypoint.sh"):
+    # Fork recipes share rocmfpx's generated-Containerfile build.sh; upstream
+    # has a tracked Containerfile and its own build.sh (same --check contract).
+    for d, files in (("strix", ("build.sh", "entrypoint.sh")), ("upstream", ("entrypoint.sh",))):
+        for f in files:
             p = ROOT / "runners" / d / f
             check(p.is_symlink() and p.resolve() == (ROOT / "runners" / "rocmfpx" / f).resolve(),
                   f"runners/{d}/{f}: must symlink to ../rocmfpx/{f}")
+
+
+def test_upstream_containerfile() -> None:
+    """runners/upstream: the tracked Containerfile's ARG defaults match the
+    manifest (build.sh passes the manifest values; the defaults are what a
+    bare `docker build` gets, and must not drift)."""
+    rdir = ROOT / "runners" / "upstream"
+    doc = tomllib.loads((rdir / "manifest.toml").read_text())
+    base = doc["base"]
+    check(base.get("lineage") == "fedora44-rocm10", "runners/upstream: [base].lineage changed; update this test")
+    check(bool(DIGEST.match(base["builder_digest"])), "runners/upstream: base.builder_digest malformed")
+    cf = (rdir / "Containerfile").read_text()
+    # Every declaration, not just the last: the ROCm ARGs are declared once
+    # per stage, and a bare `docker build` gets each stage's own default.
+    args: dict[str, list[str]] = {}
+    for name, value in re.findall(r"^ARG ([A-Z_]+)=(\S+)$", cf, re.M):
+        args.setdefault(name, []).append(value)
+    check(args.get("FEDORA_BUILDER") == [f"{base['builder_image']}@{base['builder_digest']}"],
+          "runners/upstream/Containerfile: ARG FEDORA_BUILDER != manifest builder image@digest")
+    check(args.get("FEDORA_RUNTIME") == [f"{base['image']}@{base['digest']}"],
+          "runners/upstream/Containerfile: ARG FEDORA_RUNTIME != manifest image@digest")
+    for arg, key in (("ROCM_REPO", "rocm_repo"), ("ROCM_SERIES", "rocm_series"), ("ROCM_NEVR", "rocm_nevr")):
+        vals = args.get(arg, [])
+        check(len(vals) == 2 and all(v == base[key] for v in vals),
+              f"runners/upstream/Containerfile: ARG {arg} must default to the manifest value in both stages, got {vals}")
+    check(base["rocm_version"].startswith(base["rocm_series"]) and base["rocm_nevr"].startswith(base["rocm_version"]),
+          "runners/upstream: rocm_series / rocm_version / rocm_nevr disagree")
+    check(all("@sha256:" in v for v in args.get("FEDORA_BUILDER", [""]) + args.get("FEDORA_RUNTIME", [""])),
+          "runners/upstream/Containerfile: FROM images must be digest-pinned")
+    check("ENTRYPOINT [\"/opt/rocmfpx/hal0-runner-entrypoint.sh\"]" in cf,
+          "runners/upstream/Containerfile: entrypoint must stay the shared hal0 runner entrypoint")
+    # The option names b11510 defines (CMakeLists.txt: LLAMA_BUILD_UI,
+    # LLAMA_USE_PREBUILT_UI). The fork-era *_WEBUI spelling is only a
+    # deprecated alias there, so it must not be what keeps the UI out.
+    flags = doc["build"]["cmake_flags"]
+    for f in ("-DLLAMA_BUILD_UI=OFF", "-DLLAMA_USE_PREBUILT_UI=OFF"):
+        check(f in flags, f"runners/upstream: the web UI is not used and must not be downloaded; set {f}")
+    check(not any("WEBUI" in f for f in flags),
+          "runners/upstream: *_WEBUI options are not read at this ref; use LLAMA_BUILD_UI / LLAMA_USE_PREBUILT_UI")
 
 
 #: images.json entries whose `tag` a CI build may move. Every other publish:ci
@@ -195,7 +241,8 @@ def test_no_lan_addresses() -> None:
 
 
 def main() -> int:
-    for t in (test_images_json, test_build_recipes, test_runners, test_lifecycle, test_moving_tags,
+    for t in (test_images_json, test_build_recipes, test_runners, test_upstream_containerfile,
+              test_lifecycle, test_moving_tags,
               test_allowlist,
               test_no_lan_addresses):
         before = len(failures)

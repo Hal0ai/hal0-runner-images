@@ -209,13 +209,18 @@ probes = [
 #: runner carries this table; scripts/test_repo_consistency.py enforces it.
 #: track_ref is the branch on source.repo the weekly fork watch
 #: (.github/workflows/fork-watch.yml) compares source.ref against.
-purpose = "Default ROCm + Vulkan runner (hal0 DEFAULT_ROCMFPX_IMAGE). charlie12345's ROCmFPX port, chosen because its Vulkan backend is correct on gfx1151 where ciru-ai's port is not (#1888)."
+#: FROZEN 2026-10-08 (owner decision, docs/CONSOLIDATION.md Phase 3): no
+#: further bumps. charlie12345/ROCmFPX is a squashed June snapshot of
+#: llama.cpp with no upstream merge since, and ROCmFP4 was refused upstream
+#: (ggml-org #24185). It stays only as the loader for FPX-format GGUFs
+#: already on slots; runners/upstream is the default-runner candidate.
+purpose = "FROZEN. Loader for ROCmFPX / ROCmI4 / IU4 quant GGUFs already on slots (hal0 DEFAULT_ROCMFPX_IMAGE until the upstream runner passes the gate). charlie12345's ROCmFPX port, chosen in #1888 for its correct gfx1151 Vulkan backend."
 needed_for = [
     "ROCmFPX / ROCmI4 / IU4 quant GGUFs (hal0-brain-sft-*-rocmfpx, ROCmFP4 models)",
     "minicpm5 pretokenizer and tool-call parser (patches 0001, 0002)",
     "lfm2.5 response-format grammar (patch 0004)",
 ]
-retire_when = "Upstream llama.cpp loads the FPX-family quant formats, and the brain-family models pass the hardware gate on runners/upstream without patches 0001, 0002 and 0004."
+retire_when = "The last hal0 slot on an FPX-format model has migrated to a plain GGUF on runners/upstream (hal0 migration rule, planned for the 1.5 cycle), and the brain-family models pass the gate there without patches 0001, 0002 and 0004."
 track_ref = "refs/heads/main"
 
 [ci]

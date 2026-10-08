@@ -69,6 +69,16 @@ One PR per runner. The PR template carries these boxes.
 6. **Move the hal0 pin** in a separate hal0 PR that cites the digest, the
    gate result and this PR.
 
+## `runners/upstream` specifics
+
+The upstream recipe tracks its image definition as `Containerfile` (the
+fork recipes generate theirs in `rocmfpx/build.sh`). Its `[base]` is Fedora
+44 by digest plus AMD's stable ROCm packages at an exact NEVR
+(`rocm_nevr`), not the strix base. A bump therefore has two independent
+pins: `[source].ref` (a ggml-org **release tag's** commit, not master) and
+`[base].rocm_nevr`. Move one at a time. `scripts/test_repo_consistency.py`
+checks the Containerfile `ARG` defaults against the manifest, so edit both.
+
 ## Toolbox images (cpu, flm, kokoro, moonshine, qwen3tts)
 
 These are `publish: ci` in `images.json` since 2026-10-08. A CI build pushes
