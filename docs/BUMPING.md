@@ -69,6 +69,22 @@ One PR per runner. The PR template carries these boxes.
 6. **Move the hal0 pin** in a separate hal0 PR that cites the digest, the
    gate result and this PR.
 
+## Toolbox images (cpu, flm, kokoro, moonshine, qwen3tts)
+
+These are `publish: ci` in `images.json` since 2026-10-08. A CI build pushes
+one immutable `<tag>-r<commit[:7]>` tag and never moves the `tag` hal0 pulls
+(`:v1`, `flm:0.9.44`); `scripts/test_repo_consistency.py` refuses
+`moving_tag` on them. To adopt a build: hardware-gate the new digest, then
+either point hal0 at the immutable tag or digest, or retag deliberately:
+
+```bash
+docker buildx imagetools create -t ghcr.io/hal0ai/hal0-toolbox-cpu:v1 \
+  ghcr.io/hal0ai/hal0-toolbox-cpu:v1-r<commit>
+```
+
+Retagging changes what every install pulls on its next update, so it is a
+release decision, not a CI side effect.
+
 ## Rebuilding from the source mirror
 
 If a fork deletes the pinned commit:

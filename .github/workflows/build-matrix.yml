@@ -105,6 +105,11 @@ jobs:
                   "context": b["context"],
                   "dockerfile": b["dockerfile"],
                   "build_args_from": b.get("build_args_from", ""),
+                  # Only an entry with moving_tag=true (comfyui) also
+                  # pushes its images.json tag. Every other publish:ci
+                  # image gets the immutable tag alone, so CI can never
+                  # move a tag hal0 already pulls (e.g. hal0-toolbox-cpu:v1).
+                  "moving": "true" if e.get("moving_tag") else "false",
               })
           print("matrix=" + json.dumps({"include": legs}))
           print("has_images=" + ("true" if legs else "false"))
@@ -182,15 +187,35 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
+      # Every build gets ONE immutable tag `<tag>-r<commit[:7]>`, refused if it
+      # already exists. The images.json tag (the one hal0 pulls) moves only
+      # for an entry with moving_tag=true; for the rest it moves through a
+      # planned bump (docs/BUMPING.md), never as a side effect of a build.
+      - name: Compute immutable tag and refuse to overwrite
+        id: imm
+        shell: bash
+        env:
+          IMAGE: ${{ matrix.image }}
+          TAG: ${{ matrix.tag }}
+        run: |
+          set -euo pipefail
+          tag="${TAG}-r${GITHUB_SHA:0:7}"
+          if [[ "${{ github.event_name }}" != "pull_request" ]] && docker buildx imagetools inspect "${IMAGE}:${tag}" >/dev/null 2>&1; then
+            echo "::error::${IMAGE}:${tag} already exists; tags from this workflow are immutable."
+            exit 1
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
       - name: Compute tags + labels
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ matrix.image }}
           tags: |
-            type=raw,value=${{ matrix.tag }},enable=${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
-            type=ref,event=branch
-            type=ref,event=pr
+            type=raw,value=${{ steps.imm.outputs.tag }}
+            type=raw,value=${{ matrix.tag }},enable=${{ matrix.moving == 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') }}
+            type=ref,event=branch,enable=${{ matrix.moving == 'true' }}
+            type=ref,event=pr,enable=${{ matrix.moving == 'true' }}
           labels: |
             org.opencontainers.image.title=${{ matrix.key }}
             org.opencontainers.image.source=https://github.com/Hal0ai/hal0-runner-images
@@ -213,9 +238,13 @@ jobs:
       - name: Report digest
         if: steps.build.outputs.digest != ''
         run: |
-          echo "Pushed ${{ matrix.image }}:${{ matrix.tag }}"
+          echo "Pushed ${{ steps.meta.outputs.tags }}"
           echo "Digest ${{ steps.build.outputs.digest }}"
-          echo "To pin it into the app manifest, run the 'Pin runner image digests' workflow."
+          if [[ "${{ matrix.moving }}" == "true" ]]; then
+            echo "To pin it into the app manifest, run the 'Pin runner image digests' workflow."
+          else
+            echo "${{ matrix.tag }} did not move. Adopt this digest only through a planned bump (docs/BUMPING.md)."
+          fi
 
   # build-recipes.json targets (strix-base, llama-vulkan). Immutable tag only;
   # refuses to overwrite. See the header note.

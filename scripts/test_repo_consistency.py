@@ -131,6 +131,21 @@ def test_runners() -> None:
                   f"runners/{d}/{f}: must symlink to ../rocmfpx/{f}")
 
 
+#: images.json entries whose `tag` a CI build may move. Every other publish:ci
+#: image gets only an immutable `<tag>-r<commit>` tag (build-matrix.yml), so a
+#: build can never change what a hal0 install pulls by tag.
+MOVING_TAG_ALLOWED = {"comfyui"}
+
+
+def test_moving_tags() -> None:
+    for e in load_json("images.json")["images"]:
+        mt = e.get("moving_tag", False)
+        check(isinstance(mt, bool), f"images.json {e['id']}: moving_tag must be a bool")
+        if mt:
+            check(e["id"] in MOVING_TAG_ALLOWED,
+                  f"images.json {e['id']}: moving_tag would let CI move a tag hal0 pulls; "
+                  "move it through a bump (docs/BUMPING.md) instead")
+
 def test_lifecycle() -> None:
     """Every runner says why it exists, when it retires, and what to watch."""
     for d in ("rocmfpx", "upstream", "strix", "promptforge"):
@@ -180,7 +195,8 @@ def test_no_lan_addresses() -> None:
 
 
 def main() -> int:
-    for t in (test_images_json, test_build_recipes, test_runners, test_lifecycle, test_allowlist,
+    for t in (test_images_json, test_build_recipes, test_runners, test_lifecycle, test_moving_tags,
+              test_allowlist,
               test_no_lan_addresses):
         before = len(failures)
         t()
