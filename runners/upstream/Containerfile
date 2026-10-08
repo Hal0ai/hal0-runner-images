@@ -91,6 +91,8 @@ ENV ROCM_PATH=/opt/rocm \
     LD_LIBRARY_PATH=/opt/rocmfpx/bin:/opt/rocm/core/lib:/opt/rocm/core/lib/rocm_sysdeps/lib \
     HSA_OVERRIDE_GFX_VERSION=11.5.1 \
     GGML_HIP_ENABLE_UNIFIED_MEMORY=1
+# Global ARGs are not visible inside a stage unless redeclared.
+ARG FEDORA_RUNTIME
 ARG SOURCE_REPO
 ARG SOURCE_REF
 ARG RECIPE_DIR

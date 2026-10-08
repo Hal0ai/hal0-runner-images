@@ -58,19 +58,17 @@ echo "==> source  ${REPO} @ ${REF}"
 echo "==> rocm    $(read_manifest base.rocm_series) ($(read_manifest base.rocm_nevr))"
 echo "==> patches ${#PATCHES[@]}"
 
-# Stage dir IS the build context: src/ + the entrypoint, nothing else.
-STAGE="${WORK}/stage"
+# $WORK is the build context: src/ + the entrypoint, nothing else. The
+# source lives at $WORK/src because build-matrix.yml's source-mirror step
+# bundles exactly that path after a push (same contract as ../rocmfpx).
+STAGE="$WORK"
 SRC="${STAGE}/src"
-rm -rf "$STAGE"; mkdir -p "$STAGE"
-# GitHub serves any reachable commit by SHA, so a depth-1 fetch of the pin
-# is enough (and ~10x smaller than the full clone the fork recipes need).
-# Fall back to a full clone for a host that does not.
-git init -q "$SRC"
-git -C "$SRC" remote add origin "$REPO"
-if ! git -C "$SRC" fetch -q --depth 1 origin "$REF"; then
-    rm -rf "$SRC"
-    git clone -q --no-checkout "$REPO" "$SRC"
-fi
+mkdir -p "$STAGE"
+rm -rf "$SRC" "${STAGE}/hal0-runner-entrypoint.sh"
+# Full clone, not --depth 1: the source mirror is a `git bundle` of this
+# checkout, and git refuses to bundle a shallow repository. Clone-then-
+# checkout rather than fetch-by-SHA for the same reason ../rocmfpx gives.
+git clone -q --no-checkout "$REPO" "$SRC"
 git -C "$SRC" checkout -q "$REF"
 HEAD_SHA="$(git -C "$SRC" rev-parse HEAD)"
 [[ "$HEAD_SHA" == "$REF" ]] || {
