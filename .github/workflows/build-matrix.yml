@@ -361,9 +361,13 @@ jobs:
       # A hosted runner has 4 vCPUs and 16 GB. One hipcc job can take 3-4 GB,
       # and with JOBS=nproc plus the Vulkan shader generator the rocmfpx build
       # ran out of memory ("Cannot allocate memory" / glslc "Failed to fork
-      # process"). Add swap and run half as many jobs.
-      - name: Add swap
+      # process"). Add swap and run half as many jobs. Swap alone did not
+      # fix it: fork() of the large vulkan-shaders-gen process was refused
+      # under the default overcommit heuristic with 15 GB of swap still
+      # free, so allow overcommit for the build (CI runner only).
+      - name: Add swap and allow overcommit
         run: |
+          sudo sysctl -w vm.overcommit_memory=1
           sudo swapoff -a || true
           sudo fallocate -l 16G /mnt/hal0-swap
           sudo chmod 600 /mnt/hal0-swap
