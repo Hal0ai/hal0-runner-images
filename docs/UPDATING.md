@@ -85,14 +85,106 @@ dispatch **Build runner images** on `main` with `runners=<key>` and `push=true`.
 
 ## 4. Gate: the Strix Halo test box
 
-A person runs the hardware gate against the candidate digest:
+A person runs the hardware gate on the Strix Halo box against the candidate
+digest, from a checkout of this repository (Python 3.11+, podman; `gh` for
+`--upload`):
 
 ```
-hal0 gate ghcr.io/hal0ai/hal0-runner-<key>@sha256:<digest>
+python3 scripts/gate.py standard --digest sha256:<digest> --upload
+python3 scripts/gate.py --group llama.cpp \
+    --digest standard=sha256:<a> --digest cpu=sha256:<b> --upload
+python3 scripts/gate.py flm --plan       # print the probes and podman commands; run nothing
 ```
 
-The script lives in hal0, not here. Its contract with this repo is a JSON report,
-published at an `https` URL, with this shape (one runner):
+`scripts/gate.py` runs the `[verification]` section of the runner's manifest
+(docs/RECIPES.md) and nothing else; the probes are declared there, not in the
+script. For each runner it:
+
+1. pulls `image@digest`, checks the `dev.hal0.runner.key` and
+   `org.opencontainers.image.version` labels, and asks the registry that the tag
+   (`--tag`, or the label) still points at that digest. A mismatch stops the gate
+   before any container runs;
+2. runs the lane-less probes, then every probe and session once per lane in
+   `[verification.lanes]` (`rocm` and `vulkan` for `standard`), then the
+   cross-lane probes (ROCm vs Vulkan perplexity). One container and one model at
+   a time;
+3. before every model load reads `/sys/devices/system/node/node0/meminfo` (the
+   host, also from inside an LXC container) and `/proc/meminfo` (the container's
+   own limit), takes the lower, and refuses a load that would leave less than
+   `--headroom-gib` (default 8 GiB) available. While a server loads it is stopped
+   if available memory falls below half of that;
+4. removes every container it started, on success, failure or Ctrl-C, and on
+   start removes any `gate-<key>-*` container an earlier killed run left.
+
+It never touches hal0's slots, units or configuration, but it shares the GPU
+and memory with them: run it in an agreed GPU window. Its containers are named
+`gate-<key>-<pid>-<n>`, publish on `127.0.0.1` only, mount every model
+read-only, never pull implicitly (`--pull=never` after the one pull), and get the
+flags of a hal0 slot: the lane's devices (`/dev/kfd` and each `/dev/dri` node;
+`/dev/accel/accel0` for the NPU), `seccomp=unconfined`, `apparmor=unconfined`,
+`label=disable` (nothing is relabelled), and the GPU groups: `--group-add
+keep-groups` under rootless podman, the host's numeric `video` and `render` gids
+under rootful podman.
+
+| option | meaning |
+|---|---|
+| `KEY` or `--group NAME` | one runner, or every runner of a shared pin (`llama.cpp` = `standard` + `cpu`) |
+| `--digest` | `sha256:<64 hex>`; in a group `key=sha256:...` once per runner |
+| `--tag` | the immutable tag expected (default: read from the image label) |
+| `--models`, `--models-dir` | `gate-models.toml` (default `$HAL0_GATE_MODELS`, then `~/.config/hal0/gate-models.toml`); the base for its relative paths |
+| `--allow-skip PROBE` | a probe, or a glob such as `vulkan/*` or `brain-sft-*`, whose skip does not fail the gate. Repeatable |
+| `--headroom-gib` | the memory floor, default 8 |
+| `--out` | the report file (default `gate-<runner or group>-<tag>-<UTC stamp>.json`) |
+| `--upload` | publish a passing report (below) and print its URL |
+
+Exit status 0 means passed, 1 failed, 2 the gate could not run.
+
+### gate-models.toml
+
+Model files are the operator's and stay outside this repository. The manifests
+name them by key (`{path:<key>}`); a small TOML file maps keys to files:
+
+```toml
+root = "/srv/models"            # optional; relative paths resolve here (or --models-dir)
+
+[models]
+"qwen3.8-27b"        = "unsloth/Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-Q4_K_XL.gguf"
+"qwen3.8-27b-mmproj" = "unsloth/Qwen3.8-27B-GGUF/mmproj-F16.gguf"
+"lfm2.5-2.6b"        = "LiquidAI/LFM2.5-2.6B-GGUF/LFM2.5-2.6B-Q8_0.gguf"
+"hal0-brain-sft"     = "local/hal0-brain-sft/hal0-brain-sft.gguf"
+"perplexity-text"    = "/srv/gate/wiki.test.raw"    # any plain text, a few hundred KB
+kokoro               = "local/kokoro-v1/kokoro-onnx"   # directory: kokoro-*.onnx + voices*.bin
+moonshine            = "local/moonshine/small_streaming"
+qwen3tts             = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
+"qwen3tts-cache"     = "/srv/gate/qwen3tts-cache"   # optional, written to: reused HF cache
+sdxl                 = "comfyui/checkpoints/sd_xl_base_1.0.safetensors"
+
+[models.flm-models]               # FastFlowLM's model cache and a model already pulled into it
+path = "/srv/flm/models"
+tag  = "llama3.2:1b"
+
+[models.stt-sample]               # 16 kHz mono 16-bit WAV of short English speech, and what it says
+path = "/srv/gate/sample-16k.wav"
+text = "and so my fellow americans ask not what your country can do for you"
+```
+
+| runner | keys |
+|---|---|
+| `standard` | `qwen3.8-27b`, `qwen3.8-27b-mmproj`, `lfm2.5-2.6b`, `hal0-brain-sft`, `perplexity-text` |
+| `cpu` | `lfm2.5-2.6b` |
+| `flm` | `flm-models` (with `tag`) |
+| `kokoro` | `kokoro` |
+| `moonshine` | `moonshine`, `stt-sample` (with `text`) |
+| `qwen3tts` | `qwen3tts`, optional `qwen3tts-cache` |
+| `comfyui` | `sdxl` |
+
+A key that is missing, or whose file does not exist, skips the probes that need
+it. A skip fails the gate unless `--allow-skip` names it.
+
+### The report
+
+The report is `hal0.gate-report.v1` JSON, the contract with `ci/promote.py`
+(one runner):
 
 ```json
 {
@@ -103,20 +195,59 @@ published at an `https` URL, with this shape (one runner):
   "tag": "b11552-r1a2b3c",
   "passed": true,
   "date": "2026-10-12T09:00:00Z",
-  "lanes": { "rocm": { "passed": true }, "vulkan": { "passed": true } },
-  "probes": [ { "name": "health", "passed": true, "detail": "..." } ]
+  "lanes": { "rocm": { "passed": true, "probes": 12 }, "vulkan": { "passed": true, "probes": 10 } },
+  "probes": [ { "name": "rocm/paris", "passed": true, "detail": "..." } ],
+  "skipped": [ { "name": "rocm/brain-sft-tool-call", "reason": "skipped: model 'hal0-brain-sft' is not configured in gate-models.toml" } ],
+  "informational": [ { "name": "rocm/structured-reasoning-none", "status": "failed", "detail": "..." } ],
+  "models": [ { "key": "qwen3.8-27b", "file": "Qwen3.8-27B-UD-Q4_K_XL.gguf", "bytes": 17000000000 } ],
+  "gate": { "script": "scripts/gate.py", "revision": "<commit of this repo>", "allow_skip": ["brain-sft-*"] }
 }
 ```
 
-For a group, one document may cover every runner: the same `schema`, and a
-`runners` array holding one object of the shape above (without `schema`) per
-runner. Or publish one report per runner and name each as `runner=URL`.
+- `probes` lists every gating probe, named `<lane>/<probe>` or, for a lane-less
+  probe, `<probe>`. A probe skipped without `--allow-skip` is in it with
+  `passed: false` and `skipped: true`.
+- `skipped` lists the skips `--allow-skip` covered; `informational` the probes
+  the manifest marks as not gating (and `kind = "elsewhere"` probes the gate
+  cannot run on this box). Neither affects `passed`.
+- A lane passed when at least one of its probes ran and all of them passed.
+  Promote sets `lanes_gated` from the lanes that passed, so a lane whose probes
+  were all skipped is not admitted in hal0.
+- `passed` is true when there is at least one probe, every probe passed, and at
+  least one lane passed.
 
-Promote refuses a report that is not valid `hal0.gate-report.v1` JSON, whose
-`runner` or `digest` is not the one being promoted, whose `passed` is not `true`,
-or that lists any probe with `passed` other than `true`. There is no "read it by
-hand" path. Leave host names and addresses out of the report: this repository is
+For a group, one document covers every runner: the same `schema`, a `runners`
+array holding one object of the shape above (without `schema`) per runner, and
+an overall `passed` and `date`. Or publish one report per runner and name each
+as `runner=URL`.
+
+Before writing it, the gate runs promote's own validator
+(`promote.report_for` and `validate_gate_report`) on the document and stops if
+promote would read it differently. Promote refuses a report that is not valid
+`hal0.gate-report.v1` JSON, whose `runner` or `digest` is not the one being
+promoted, whose `passed` is not `true`, or that lists any probe with `passed`
+other than `true`. There is no "read it by hand" path.
+
+The report names models by key and file name only. Operator paths, the host
+name and private addresses are scrubbed from every detail: this repository is
 public.
+
+### Publishing it
+
+`--upload` attaches a passing report to the prerelease `gate-<runner>-<tag>`
+(`gate-llama.cpp-<release>` for the group) of this repository, created if
+missing and never marked latest, under a unique asset name (nothing is
+replaced). It then reads the asset back without credentials, checks it with
+promote's validator again, and prints the URL:
+
+```
+https://github.com/Hal0ai/hal0-runner-images/releases/download/gate-standard-b11552-r1a2b3c/gate-standard-b11552-r1a2b3c-20261012T090000Z.json
+```
+
+That URL is the `gate_reports` input of promote. Promote sends its token only
+to `api.github.com` and `raw.githubusercontent.com`, and never along a
+redirect; a release asset is public and needs none. A failed report is not
+uploaded; keep the local file as the record.
 
 ## 5. Promote: `promote.yml`
 

@@ -48,6 +48,8 @@ runners/llama.cpp.toml        the llama.cpp release shared by standard, cpu and 
 images.json                   the catalogue hal0 reads (docs/SCHEMA.md)
 retention-allowlist.json      old packages the GHCR cleanup must keep for installed boxes
 scripts/runner.py             builds any runner: list, tag, build, build --check
+scripts/gate.py               the hardware gate: runs a manifest's [verification] against a
+                              published digest on the Strix Halo box, writes the gate report
 scripts/source_watch.py       weekly report: which upstreams have a newer release
 scripts/retention.py          GHCR cleanup (dry run unless asked to delete)
 scripts/test_*.py             stdlib checks, run on every pull request
@@ -71,6 +73,7 @@ The checks need only Python 3.11+ and git:
 python3 scripts/test_repo_consistency.py
 python3 scripts/test_retention_fixtures.py
 python3 scripts/test_source_watch.py
+python3 scripts/test_gate.py
 ```
 
 To change a runner, see [docs/RECIPES.md](docs/RECIPES.md) for the recipe and

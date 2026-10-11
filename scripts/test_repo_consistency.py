@@ -9,7 +9,8 @@ No network, no container runtime. Checks:
   * images.json is schema hal0.runner-images.v2 (docs/SCHEMA.md), with no
     unknown fields, and every recipe has exactly one matching entry;
   * every runners/<key>/manifest.toml passes scripts/runner.py's validation
-    and carries [verification] and [lifecycle] (with a release-aware track);
+    and carries [verification] (a valid scripts/gate.py plan) and [lifecycle]
+    (with a release-aware track);
   * every Containerfile takes its base images from manifest build args pinned
     by digest, declares no pin defaults of its own, and clones no branch;
   * Python dependency files pin exact versions;
@@ -31,6 +32,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import gate  # noqa: E402
 import runner  # noqa: E402
 from retention import parse_allowlist_ref  # noqa: E402
 
@@ -150,8 +152,9 @@ def test_manifests() -> None:
         check(doc["runner"]["family"] in FAMILIES, f"runners/{key}: family not a hal0 RuntimeFamily")
         check(doc["runner"]["tier"] in TIERS, f"runners/{key}: tier invalid")
         check(set(doc["runner"]["backends"]) <= BACKENDS, f"runners/{key}: backends invalid")
-        probes = doc.get("verification", {}).get("probes")
-        check(isinstance(probes, list) and len(probes) > 0, f"runners/{key}: [verification].probes must list the gate")
+        # [verification] is scripts/gate.py's input: the same validator the gate runs.
+        for p in gate.validate_verification(key, doc):
+            failures.append(f"runners/{key}: {p}")
         life = doc.get("lifecycle", {})
         for f in ("purpose", "retire_when"):
             check(isinstance(life.get(f), str) and life[f].strip() != "", f"runners/{key}: [lifecycle].{f} missing")
