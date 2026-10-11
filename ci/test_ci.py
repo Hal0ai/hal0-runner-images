@@ -203,7 +203,7 @@ class ReleaseWatchTests(unittest.TestCase):
         self.assertEqual(rw.newest_cuda_tag(tags, "b11500"), "server-cuda-b9")
         self.assertIsNone(rw.newest_cuda_tag(["server-b1"], "b11552"))
 
-    def test_bump_sets_the_cuda_row_to_the_newest_tag_that_exists(self):
+    def test_bump_sets_the_cuda_candidate_to_the_newest_tag_that_exists(self):
         with tempfile.TemporaryDirectory() as t:
             root = Path(t)
             make_tree(root, {"standard": {}}, pin={"version": "b11510", "ref": OLD_SHA})
@@ -215,24 +215,28 @@ class ReleaseWatchTests(unittest.TestCase):
             self.assertEqual(bump.branch, "bot/bump-llama-cpp-b11552-cuda-b11541")
             self.assertEqual(sorted(bump.files), ["images.json", "runners/llama.cpp.toml"])
             row = json.loads((root / "images.json").read_text())["runners"][1]
-            self.assertEqual((row["tag"], row["digest"]), ("server-cuda-b11541", "sha256:" + "d" * 64))
-            self.assertIsNone(row["candidate"])
+            self.assertEqual(row["candidate"], {"tag": "server-cuda-b11541", "digest": "sha256:" + "d" * 64})
+            self.assertEqual(row["tag"], "server-cuda-b11515")  # the pin moves only through promote
             self.assertIn("server-cuda-b11541", rw.pr_body(bump))
 
-    def test_cuda_alone_moves_when_the_pin_is_current_and_nothing_newer_means_no_pr(self):
+    def test_cuda_is_only_offered_when_newer_than_the_pin_and_the_candidate(self):
+        digest = lambda tag: "sha256:" + "d" * 64  # noqa: E731
         with tempfile.TemporaryDirectory() as t:
             root = Path(t)
             make_tree(root, {"standard": {}}, pin={"version": "b11552", "ref": NEW_SHA})
+            # already pinned at the newest tag: nothing to do
+            self._catalogue(root, tag="server-cuda-b11541")
+            self.assertIsNone(rw.run(root, self._api(), apply=True, cuda_tags=lambda: ["server-cuda-b11541"], cuda_digest=digest))
+            # pinned older, candidate already the newest: nothing to do either
+            self._catalogue(root, tag="server-cuda-b11515", candidate={"tag": "server-cuda-b11541", "digest": DIGEST})
+            self.assertIsNone(rw.run(root, self._api(), apply=True, cuda_tags=lambda: ["server-cuda-b11541"], cuda_digest=digest))
+            # pinned older, no candidate: a cuda-only PR that leaves the pin file alone
             self._catalogue(root, tag="server-cuda-b11515")
             before = (root / "runners/llama.cpp.toml").read_text()
-            digest = lambda tag: "sha256:" + "d" * 64  # noqa: E731
             bump = rw.run(root, self._api(), apply=True, cuda_tags=lambda: ["server-cuda-b11541"], cuda_digest=digest)
             self.assertIsNone(bump.tag)
-            self.assertEqual(bump.branch, "bot/bump-llama-cpp-cuda-b11541")
-            self.assertEqual(bump.files, ["images.json"])
+            self.assertEqual((bump.branch, bump.files), ("bot/bump-llama-cpp-cuda-b11541", ["images.json"]))
             self.assertEqual((root / "runners/llama.cpp.toml").read_text(), before)
-            # the row now holds the newest tag: running again finds nothing to do
-            self.assertIsNone(rw.run(root, self._api(), apply=True, cuda_tags=lambda: ["server-cuda-b11541"], cuda_digest=digest))
 
 
 class PromoteTests(unittest.TestCase):
@@ -360,7 +364,9 @@ class PromoteTests(unittest.TestCase):
                 "external": True, "source_commit": "", "gate_report": None, "gate_summary": "no hardware gate", "lanes_gated": []}
         row = json.loads(promote.edit_catalogue(raw, [item]))["runners"][0]
         self.assertEqual((row["tag"], row["gate_report"], row["lanes_gated"]), ("server-cuda-b11541", None, []))
-        self.assertNotIn("- gate report:", promote.pr_body([item]))
+        body = promote.pr_body([item])
+        self.assertNotIn("- gate report:", body)
+        self.assertIn("UNGATED external image", body)
 
     def test_group_report_picks_each_runners_entry(self):
         def entry(k, d):

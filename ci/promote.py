@@ -228,7 +228,9 @@ def pr_body(items: list[dict]) -> str:
         out.append(f"### `{i['runner']}`: `{i['image']}:{i['tag']}`\n")
         out.append(f"- digest: `{i['digest']}`")
         if i["external"]:
-            out.append("- external image: no build provenance from this repository to verify")
+            out.append("- **UNGATED external image**: ggml-org's image, not built here, so there is no build provenance "
+                       "to verify and no hardware gate (the CUDA lane is hidden in hal0); `lanes_gated` stays empty. "
+                       "Only the registry digest and tag were checked.")
         if i["source_commit"]:
             out.append(f"- built from `{i['source_commit']}` of Hal0ai/hal0-runner-images (signed build provenance, refs/heads/main)")
         if i["gate_report"]:
