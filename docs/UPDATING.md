@@ -65,7 +65,7 @@ hal0 gate ghcr.io/hal0ai/hal0-runner-<key>@sha256:<digest>
 ```
 
 The script lives in hal0, not here. Its contract with this repo is a JSON report,
-published at an `https` URL, with this shape:
+published at an `https` URL, with this shape (one runner):
 
 ```json
 {
@@ -81,6 +81,10 @@ published at an `https` URL, with this shape:
 }
 ```
 
+For a group, one document may cover every runner: the same `schema`, and a
+`runners` array holding one object of the shape above (without `schema`) per
+runner. Or publish one report per runner and name each as `runner=URL`.
+
 Promote refuses a report that is not valid `hal0.gate-report.v1` JSON, whose
 `runner` or `digest` is not the one being promoted, whose `passed` is not `true`,
 or that lists any probe with `passed` other than `true`. There is no "read it by
@@ -89,44 +93,54 @@ public.
 
 ## 5. Promote: `promote.yml`
 
-Dispatch on `main` with `runner`, `digest` and `gate_report`. It first verifies:
+Dispatch on `main` with two inputs:
 
-1. the digest exists in this runner's package;
-2. its signed provenance says `build.yml` built it on `refs/heads/main` of this repo;
+- `promotions`: comma-separated `runner=digest`. An external runner (cuda, which
+  has no recipe here) is written `cuda=<tag>@<digest>`.
+- `gate_reports`: one `https` URL covering every runner, or `runner=URL` for each.
+
+**A llama.cpp bump is one run for the whole group**, because `standard`, `cpu` and
+`cuda` must name the same `b<N>` release (hal0's release gate,
+`python -m hal0.runners.pins --check-release`, fails otherwise):
+
+```
+promotions:   standard=sha256:<a>,cpu=sha256:<b>,cuda=server-cuda-b11552@sha256:<c>
+gate_reports: https://.../gate-b11552.json
+```
+
+A group that mixes releases is refused. The other runners (`flm`, `comfyui`,
+`kokoro`, `moonshine`, `qwen3tts`) are promoted one at a time: `promotions: kokoro=sha256:<d>`.
+
+Every item is verified first, and nothing is opened unless all of them pass:
+
+1. the digest exists in the runner's package;
+2. its signed provenance says `build.yml` built it on `refs/heads/main` of this repo
+   (not checked for external runners);
 3. its immutable tag (read from the image's `org.opencontainers.image.version`
    label) still points at that digest;
-4. the gate report is valid (above).
+4. a gate report names the same runner and digest and passed (above).
 
-Then it opens two PRs and merges neither:
+Then it opens two PRs, one each however many runners were promoted, and merges neither:
 
-- **this repo:** `images.json` gets that runner's `tag` and `digest`, its
+- **this repo:** `images.json` gets each runner's `tag` and `digest`, its
   `candidate` is cleared, and `gate_report` and `lanes_gated` are set from the
   report (the lanes whose `passed` is true);
-- **Hal0ai/hal0:** the runner's row in the pin table of `manifest.json`, and no
+- **Hal0ai/hal0:** those runners' rows in the pin table of `manifest.json`, and no
   other file (the job aborts if anything else changed).
-
-A llama.cpp bump moves `standard`, `cpu` and `cuda` together, and hal0's release
-gate (`python -m hal0.runners.pins --check-release`) fails while they name
-different `b<N>` releases. So promote all three for one bump: three dispatches,
-three hal0 PRs (each edits a different row; rebase the later ones). The gate
-stays red until the last one merges.
-
-`cuda` has no recipe here (it pins ggml-org's own image). Promote it with the
-extra `tag` input; it then checks the digest and tag in the registry but cannot
-check build provenance.
 
 The field names hal0 expects live in one commented block, `ci/hal0_pins.py`
 (`HAL0_PIN_TABLE`, `HAL0_FIELDS`): hal0's `manifest.json` has a top-level `runners`
 object, and each row has exactly `image` (bare repository), `tag` (bare tag),
-`digest` and `lanes_gated`. Promote writes those four fields for one runner. The GHCR retention
-sweep reads the same table, so it never deletes an image hal0 pins.
+`digest` and `lanes_gated`. The GHCR retention sweep reads the same table, so it
+never deletes an image hal0 pins; pins outside `ghcr.io/hal0ai/` (cuda) are ignored
+because the sweep does not manage them.
 
 ## 6. Boxes
 
 hal0's nightly/release carries the new pin. A slot without its own `image_pin`
 launches the new digest on its next restart (`hal0 update`).
 
-Rollback is another promote: dispatch it with the previous gated digest (still in
+Rollback is another promote: dispatch it with the previous gated digests (still in
 GHCR; the retention sweep does not delete pinned digests or tags it cannot
 classify).
 

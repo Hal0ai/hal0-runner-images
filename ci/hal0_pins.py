@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 
 HAL0_REPO = "Hal0ai/hal0"
+OWN_IMAGE_PREFIX = "ghcr.io/hal0ai/"      # retention only protects images in our own namespace
 HAL0_PIN_FILE = "manifest.json"          # the ONLY file a promote PR in hal0 may touch
 HAL0_PIN_TABLE = "runners"               # top-level object in that file (key -> row)
 HAL0_FIELDS = {                          # our value -> hal0 row field
@@ -49,7 +50,7 @@ def table_of(doc: object) -> dict | None:
 
 
 def pin_refs(table: dict) -> list[str]:
-    """Image refs hal0 pins, as retention understands them: repo:tag and repo@digest."""
+    """Image refs hal0 pins in ghcr.io/hal0ai, as retention understands them: repo:tag and repo@digest."""
     refs: list[str] = []
     for key, row in table.items():
         if not isinstance(row, dict):
@@ -59,6 +60,8 @@ def pin_refs(table: dict) -> list[str]:
         digest = row.get(HAL0_FIELDS["digest"])
         if not image or ":" in image or "@" in image:
             raise ValueError(f"row {key!r}: {HAL0_FIELDS['image']!r} must be a bare repository, got {image!r}")
+        if not image.startswith(OWN_IMAGE_PREFIX):
+            continue  # e.g. cuda (ghcr.io/ggml-org/llama.cpp): not ours, retention never touches it
         if tag:
             refs.append(f"{image}:{tag}")
         if digest:

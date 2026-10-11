@@ -1,23 +1,30 @@
 name: Promote runner image
 
-# Moves one runner's GATED digest into the two places that consume pins
-# (docs/UPDATING.md, step 5). Run it by hand after the hardware gate passes:
+# Moves GATED digests into the two places that consume pins (docs/UPDATING.md,
+# step 5). Run it by hand after the hardware gate passes:
 #
-#   runner       runner key, e.g. standard
-#   digest       sha256:... of the image that passed the gate
-#   gate_report  https URL of the gate report (JSON, schema hal0.gate-report.v1)
+#   promotions    what to pin, comma separated:
+#                   standard=sha256:<digest>          a runner built here
+#                   cuda=<tag>@sha256:<digest>        an external runner (no recipe here)
+#                 A llama.cpp bump is ONE run for the group:
+#                   standard=sha256:..,cpu=sha256:..,cuda=server-cuda-b11552@sha256:..
+#   gate_reports  one https URL covering every runner, or key=URL for each
+#                 (JSON, schema hal0.gate-report.v1; a group document is fine)
 #
-# It verifies, then opens TWO pull requests and merges neither:
-#   1. this repo:  images.json  the runner's tag + digest (candidate cleared),
+# It verifies every item, then opens TWO pull requests and merges neither:
+#   1. this repo:  images.json  each runner's tag + digest (candidate cleared),
 #                  gate_report and lanes_gated (from the gate report)
-#   2. Hal0ai/hal0: its runner pin table in manifest.json (and only that file)
+#   2. Hal0ai/hal0: those runners' rows in the pin table of manifest.json (and
+#                  only that file)
+# If any item fails verification nothing is opened. A group that mixes llama.cpp
+# releases is refused.
 #
 # Verification (ci/promote.py verify): the digest exists in
 # ghcr.io/hal0ai/hal0-runner-<runner>; its signed provenance says it was built by
 # .github/workflows/build.yml on refs/heads/main of this repository; its
-# immutable tag still points at that digest; and the gate report names the same
-# digest and passed. An external runner (cuda) has no build here: its digest and
-# the `tag` input are checked against the registry, with no provenance check.
+# immutable tag still points at that digest; and a gate report names the same
+# digest and passed. An external runner (cuda) is checked against the registry
+# only: no provenance.
 #
 # SECRETS
 #   HAL0_MANIFEST_PR_TOKEN   (already exists, used by the old pin-digests
@@ -31,30 +38,21 @@ name: Promote runner image
 on:
   workflow_dispatch:
     inputs:
-      runner:
-        description: "Runner key (runners/<key>), e.g. standard"
+      promotions:
+        description: "key=sha256:<digest>, comma separated; external runners as key=<tag>@sha256:<digest>"
         type: string
         required: true
-      digest:
-        description: "Gated image digest, sha256:<64 hex>"
+      gate_reports:
+        description: "https URL of one gate report covering all runners, or key=URL for each"
         type: string
         required: true
-      gate_report:
-        description: "https URL of the gate report JSON"
-        type: string
-        required: true
-      tag:
-        description: "External runners only (cuda: no recipe here): the upstream tag that names the digest. Leave blank for built runners"
-        type: string
-        required: false
-        default: ""
       create_missing_hal0_row:
-        description: "Add the runner's row to hal0's pin table if it has none (normally hal0 adds rows first)"
+        description: "Add a runner's row to hal0's pin table if it has none (normally hal0 adds rows first)"
         type: boolean
         default: false
 
 concurrency:
-  group: promote-${{ inputs.runner }}
+  group: promote
   cancel-in-progress: false
 
 permissions:
@@ -71,10 +69,8 @@ jobs:
       packages: read
       attestations: read
     env:
-      PROMOTE_RUNNER: ${{ inputs.runner }}
-      DIGEST: ${{ inputs.digest }}
-      GATE_REPORT: ${{ inputs.gate_report }}
-      EXTERNAL_TAG: ${{ inputs.tag }}
+      PROMOTIONS: ${{ inputs.promotions }}
+      GATE_REPORTS: ${{ inputs.gate_reports }}
       THIS_TOKEN: ${{ secrets.RUNNER_IMAGES_PR_TOKEN || github.token }}
       HAL0_TOKEN: ${{ secrets.HAL0_MANIFEST_PR_TOKEN }}
     steps:
@@ -98,58 +94,36 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Verify the digest and the gate report
+      - name: Verify every digest and gate report
         id: verify
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          python3 ci/promote.py verify --runner "$PROMOTE_RUNNER" --digest "$DIGEST" \
-            --gate-report "$GATE_REPORT" --tag "$EXTERNAL_TAG" --token "$GH_TOKEN" --out "$RUNNER_TEMP/result.json"
-
-      - name: Build the pull request text
-        run: |
-          python3 - "$RUNNER_TEMP/result.json" > "$RUNNER_TEMP/pr.md" <<'PY'
-          import json, sys
-          r = json.load(open(sys.argv[1]))
-          print(f"Pins runner `{r['runner']}` to `{r['image']}:{r['tag']}`")
-          print()
-          print(f"- digest: `{r['digest']}`")
-          if r["external"]:
-              print("- external image: no build provenance from this repository to verify")
-          if r["lanes_gated"]:
-              print(f"- lanes gated: {', '.join(r['lanes_gated'])}")
-          if r["source_commit"]:
-              print(f"- built from `{r['source_commit']}` of Hal0ai/hal0-runner-images (signed build provenance, refs/heads/main)")
-          print(f"- gate report: {r['gate_report']}")
-          print(f"- gate result: {r['gate_summary']}")
-          print()
-          print("Promoted by the Promote runner image workflow in Hal0ai/hal0-runner-images "
-                "(docs/UPDATING.md). It verified that the digest exists, that the build workflow on main produced it, "
-                "and that the immutable tag still points at it. It does not merge: a person reviews the pin.")
-          PY
+          python3 ci/promote.py verify --promotions "$PROMOTIONS" \
+            --gate-reports "$GATE_REPORTS" --token "$GH_TOKEN" --out "$RUNNER_TEMP/result.json"
+          python3 ci/promote.py pr-body --result "$RUNNER_TEMP/result.json" > "$RUNNER_TEMP/pr.md"
 
       - name: Open the images.json pull request (this repository)
         env:
           GH_TOKEN: ${{ env.THIS_TOKEN }}
-          TAG: ${{ steps.verify.outputs.tag }}
+          BRANCH: ${{ steps.verify.outputs.branch }}
+          TITLE: ${{ steps.verify.outputs.title }}
         run: |
           set -euo pipefail
           python3 ci/promote.py catalogue --result "$RUNNER_TEMP/result.json"
-          if git diff --quiet; then echo "images.json already pins ${TAG}; nothing to do"; exit 0; fi
+          if git diff --quiet; then echo "images.json already has these pins; nothing to do"; exit 0; fi
           changed="$(git diff --name-only)"
           [[ "$changed" == "images.json" ]] || { echo "::error::unexpected files changed: $changed"; exit 1; }
-          branch="bot/promote-${PROMOTE_RUNNER}-${TAG}"
           git config user.name  "hal0-runner-images-bot"
           git config user.email "bot@hal0.local"
-          git checkout -b "$branch"
+          git checkout -b "$BRANCH"
           git add images.json
-          git commit -s -m "chore(runners): pin ${PROMOTE_RUNNER} to ${TAG}"
-          git push --force origin "$branch"
-          title="chore(runners): pin ${PROMOTE_RUNNER} to ${TAG}"
-          if gh pr view "$branch" --json state --jq '.state' 2>/dev/null | grep -qx OPEN; then
-            gh pr edit "$branch" --title "$title" --body-file "$RUNNER_TEMP/pr.md"
+          git commit -s -m "$TITLE"
+          git push --force origin "$BRANCH"
+          if gh pr view "$BRANCH" --json state --jq '.state' 2>/dev/null | grep -qx OPEN; then
+            gh pr edit "$BRANCH" --title "$TITLE" --body-file "$RUNNER_TEMP/pr.md"
           else
-            gh pr create --base main --head "$branch" --title "$title" --body-file "$RUNNER_TEMP/pr.md"
+            gh pr create --base main --head "$BRANCH" --title "$TITLE" --body-file "$RUNNER_TEMP/pr.md"
           fi
 
       - name: Check out Hal0ai/hal0
@@ -163,28 +137,27 @@ jobs:
         working-directory: app
         env:
           GH_TOKEN: ${{ env.HAL0_TOKEN }}
-          TAG: ${{ steps.verify.outputs.tag }}
+          BRANCH: ${{ steps.verify.outputs.branch }}
+          TITLE: ${{ steps.verify.outputs.title }}
           CREATE_MISSING: ${{ inputs.create_missing_hal0_row }}
         run: |
           set -euo pipefail
           extra=()
           if [[ "$CREATE_MISSING" == "true" ]]; then extra=(--create-missing); fi
           python3 ../ci/promote.py hal0-pin --result "$RUNNER_TEMP/result.json" --hal0-dir . "${extra[@]}"
-          if git diff --quiet; then echo "hal0 already pins ${TAG}; nothing to do"; exit 0; fi
+          if git diff --quiet; then echo "hal0 already has these pins; nothing to do"; exit 0; fi
           # The hal0 PR may touch the pin file and nothing else.
-          pin_file="$(python3 -c 'import sys; sys.path.insert(0, "../ci"); import promote; print(promote.HAL0_PIN_FILE)')"
+          pin_file="$(python3 -c 'import sys; sys.path.insert(0, "../ci"); import hal0_pins; print(hal0_pins.HAL0_PIN_FILE)')"
           changed="$(git diff --name-only)"
           [[ "$changed" == "$pin_file" ]] || { echo "::error::unexpected files changed in hal0: $changed"; exit 1; }
-          branch="bot/runner-pin-${PROMOTE_RUNNER}-${TAG}"
           git config user.name  "hal0-runner-images-bot"
           git config user.email "bot@hal0.local"
-          git checkout -b "$branch"
+          git checkout -b "$BRANCH"
           git add "$pin_file"
-          git commit -s -m "chore(runners): pin ${PROMOTE_RUNNER} to ${TAG}"
-          git push --force origin "$branch"
-          title="chore(runners): pin ${PROMOTE_RUNNER} to ${TAG}"
-          if gh pr view "$branch" --json state --jq '.state' 2>/dev/null | grep -qx OPEN; then
-            gh pr edit "$branch" --title "$title" --body-file "$RUNNER_TEMP/pr.md"
+          git commit -s -m "$TITLE"
+          git push --force origin "$BRANCH"
+          if gh pr view "$BRANCH" --json state --jq '.state' 2>/dev/null | grep -qx OPEN; then
+            gh pr edit "$BRANCH" --title "$TITLE" --body-file "$RUNNER_TEMP/pr.md"
           else
-            gh pr create --repo Hal0ai/hal0 --base main --head "$branch" --title "$title" --body-file "$RUNNER_TEMP/pr.md"
+            gh pr create --repo Hal0ai/hal0 --base main --head "$BRANCH" --title "$TITLE" --body-file "$RUNNER_TEMP/pr.md"
           fi

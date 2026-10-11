@@ -1,20 +1,32 @@
 #!/usr/bin/env python3
-"""Promote a gated runner image digest: verify it, then write the pins.
+"""Promote gated runner image digests: verify them, then write the pins.
 
-    promote.py verify  --runner K --digest sha256:.. --gate-report URL --out result.json
+    promote.py verify    --promotions "standard=sha256:..,cpu=sha256:..,cuda=<tag>@sha256:.."
+                         --gate-reports URL | "key=URL,key=URL"  --out result.json
+    promote.py pr-body   --result result.json
     promote.py catalogue --result result.json [--file images.json]
     promote.py hal0-pin  --result result.json --hal0-dir app/ [--create-missing]
 
-`verify` refuses anything that is not (a) an existing image in this repo's
-package (an external runner such as cuda, which has no recipe here, is checked
-for existence and tag only, and needs --tag), (b) built by .github/workflows/build.yml on refs/heads/main (checked
-through the build's signed provenance attestation, not through the tag), (c)
-reachable under its immutable tag at that same digest, and (d) backed by a gate
-report that is valid hal0.gate-report.v1 JSON, names the same digest and passed.
-Anything else, including a report that is not JSON, fails the run.
+One run promotes one runner, or a group (the llama.cpp group: standard + cpu +
+cuda for the same b<N> release) into ONE images.json change and ONE hal0 change.
 
-`catalogue` edits only tag/digest of one runner in images.json.
-`hal0-pin` edits only one row of the runner pin table in Hal0ai/hal0.
+`verify` refuses any item that is not (a) an existing image in its package
+(an external runner such as cuda, which has no recipe here, is checked for
+existence and tag only, and is written `key=<tag>@<digest>`), (b) built by
+.github/workflows/build.yml on refs/heads/main (checked through the build's
+signed provenance attestation, not through the tag), (c) reachable under its
+immutable tag at that same digest, and (d) backed by a gate report that is
+valid hal0.gate-report.v1 JSON, names the same digest and passed. Anything else,
+including a report that is not JSON, fails the whole run: nothing is promoted
+unless every item verifies. A group that mixes llama.cpp releases is refused.
+
+A gate report is either one runner's document or a group document
+({"schema": ..., "runners": [<per-runner documents>]}); one URL may cover every
+item, or each item may name its own (`key=URL`).
+
+`catalogue` edits only tag, digest, candidate, gate_report and lanes_gated of
+each promoted runner in images.json. `hal0-pin` edits only those runners' rows
+(image, tag, digest, lanes_gated) of the pin table in Hal0ai/hal0.
 
 Nothing here merges anything. The workflow opens PRs; a person merges them.
 """
@@ -22,6 +34,7 @@ Nothing here merges anything. The workflow opens PRs; a person merges them.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
@@ -75,33 +88,139 @@ def catalogue_entry(doc: dict, key: str) -> dict:
     return matches[0]
 
 
-def edit_catalogue(raw: str, result: dict) -> str:
+def edit_catalogue(raw: str, items: list[dict]) -> str:
     doc = json.loads(raw)
-    entry = catalogue_entry(doc, result["runner"])
-    if entry.get("image") and entry["image"] != result["image"]:
-        raise lib.CIError(f"{CATALOGUE_FILE}: entry image {entry['image']!r} != {result['image']!r}")
-    entry["tag"] = result["tag"]
-    entry["digest"] = result["digest"]
-    entry["candidate"] = None
-    entry["gate_report"] = result["gate_report"]
-    entry["lanes_gated"] = result["lanes_gated"]  # lanes are admitted by evidence
+    for item in items:
+        entry = catalogue_entry(doc, item["runner"])
+        if entry.get("image") and entry["image"] != item["image"]:
+            raise lib.CIError(f"{CATALOGUE_FILE}: entry image {entry['image']!r} != {item['image']!r}")
+        entry["tag"] = item["tag"]
+        entry["digest"] = item["digest"]
+        entry["candidate"] = None
+        entry["gate_report"] = item["gate_report"]
+        entry["lanes_gated"] = item["lanes_gated"]  # lanes are admitted by evidence
     return dump_like(doc, raw)
 
 
-def edit_hal0_pins(raw: str, result: dict, create_missing: bool = False) -> str:
+def edit_hal0_pins(raw: str, items: list[dict], create_missing: bool = False) -> str:
     doc = json.loads(raw)
     table = doc.get(HAL0_PIN_TABLE)
     if not isinstance(table, dict):
         raise lib.CIError(f"hal0 {HAL0_PIN_FILE}: no object named {HAL0_PIN_TABLE!r}; "
                           "adjust ci/hal0_pins.py to the table hal0 actually has")
-    key = result["runner"]
-    if key not in table:
-        if not create_missing:
-            raise lib.CIError(f"hal0 {HAL0_PIN_FILE}[{HAL0_PIN_TABLE}] has no row for {key!r}; "
-                              "hal0 must add the runner first (or re-run with create_missing)")
-        table[key] = {}
-    table[key].update(hal0_row(result))
+    for item in items:
+        key = item["runner"]
+        if key not in table:
+            if not create_missing:
+                raise lib.CIError(f"hal0 {HAL0_PIN_FILE}[{HAL0_PIN_TABLE}] has no row for {key!r}; "
+                                  "hal0 must add the runner first (or re-run with create_missing)")
+            table[key] = {}
+        table[key].update(hal0_row(item))
     return dump_like(doc, raw)
+
+
+# ---- the group (pure, tested) ----------------------------------------------
+
+KEY_ITEM = re.compile(r"^([a-z0-9][a-z0-9-]*)=(.+)$")
+LLAMA_RELEASE = re.compile(r"(?<![A-Za-z0-9])b(\d+)(?!\d)")
+
+
+def _tokens(text: str) -> list[str]:
+    return [t for t in re.split(r"[\s,]+", text.strip()) if t]
+
+
+def parse_promotions(text: str) -> list[dict]:
+    """`key=sha256:..` (built runner) or `key=<tag>@sha256:..` (external runner)."""
+    items, seen = [], set()
+    for tok in _tokens(text):
+        m = KEY_ITEM.match(tok)
+        if not m:
+            raise lib.CIError(f"promotion {tok!r}: expected key=<digest> or key=<tag>@<digest>")
+        key, rest = m.groups()
+        tag, _, digest = rest.rpartition("@")
+        if not lib.DIGEST_RE.match(digest):
+            raise lib.CIError(f"promotion {tok!r}: {digest!r} is not sha256:<64 hex>")
+        if key in seen:
+            raise lib.CIError(f"promotion lists {key!r} twice")
+        seen.add(key)
+        items.append({"runner": key, "digest": digest, "tag": tag})
+    if not items:
+        raise lib.CIError("no promotions given")
+    return items
+
+
+def parse_gate_reports(text: str, keys: list[str]) -> dict[str, str]:
+    """key -> report URL. One bare URL covers every key; `key=URL` names one."""
+    per_key: dict[str, str] = {}
+    default = ""
+    for tok in _tokens(text):
+        m = KEY_ITEM.match(tok)
+        if m and m.group(2).startswith("https://"):
+            per_key[m.group(1)] = m.group(2)
+        elif tok.startswith("https://"):
+            if default:
+                raise lib.CIError("more than one bare gate report URL; name each as key=URL")
+            default = tok
+        else:
+            raise lib.CIError(f"gate report {tok!r}: expected an https URL or key=URL")
+    unknown = sorted(set(per_key) - set(keys))
+    if unknown:
+        raise lib.CIError(f"gate report given for {unknown}, which are not being promoted")
+    missing = [k for k in keys if k not in per_key and not default]
+    if missing:
+        raise lib.CIError(f"no gate report for {missing}")
+    return {k: per_key.get(k) or default for k in keys}
+
+
+LLAMA_GROUP = ("standard", "cpu", "cuda")
+
+
+def llama_release(tag: str) -> str | None:
+    m = LLAMA_RELEASE.search(tag)
+    return f"b{m.group(1)}" if m else None
+
+
+def check_group(items: list[dict]) -> str | None:
+    """Refuse a group that mixes llama.cpp releases. Returns the release, if any."""
+    releases = {i["runner"]: llama_release(i["tag"]) for i in items if i["runner"] in LLAMA_GROUP}
+    if None in releases.values():
+        raise lib.CIError(f"cannot read a b<N> release from the tag of {[k for k, v in releases.items() if v is None]}")
+    if len(set(releases.values())) > 1:
+        raise lib.CIError(f"the llama.cpp group names different releases: {releases}")
+    return next(iter(releases.values()), None)
+
+
+def describe(items: list[dict]) -> tuple[str, str]:
+    """(branch, pull request title) for a promotion."""
+    keys = [i["runner"] for i in items]
+    release = check_group(items)
+    if len(items) == 1:
+        label = f"{keys[0]} to {items[0]['tag']}"
+        branch = f"bot/promote-{keys[0]}-{items[0]['tag']}"
+    else:
+        digests = hashlib.sha256("".join(sorted(i["digest"] for i in items)).encode()).hexdigest()[:7]
+        what = f"llama.cpp {release}" if release and set(keys) <= set(LLAMA_GROUP) else f"{len(keys)} runners"
+        label = f"{', '.join(keys)} to {what}"
+        branch = f"bot/promote-{'-'.join(sorted(keys))}-{digests}"
+    return branch, f"chore(runners): pin {label}"
+
+
+def pr_body(items: list[dict]) -> str:
+    out = []
+    for i in items:
+        out.append(f"### `{i['runner']}`: `{i['image']}:{i['tag']}`\n")
+        out.append(f"- digest: `{i['digest']}`")
+        if i["external"]:
+            out.append("- external image: no build provenance from this repository to verify")
+        if i["source_commit"]:
+            out.append(f"- built from `{i['source_commit']}` of Hal0ai/hal0-runner-images (signed build provenance, refs/heads/main)")
+        out.append(f"- gate report: {i['gate_report']}")
+        out.append(f"- gate result: {i['gate_summary']}\n")
+    out.append("Promoted by the Promote runner image workflow in Hal0ai/hal0-runner-images "
+               "(docs/UPDATING.md). It verified that each digest exists, that the build workflow on main "
+               "produced it, that its immutable tag still points at it, and that a passing gate report names it. "
+               "It does not merge: a person reviews the pin.")
+    return "\n".join(out) + "\n"
 
 
 # ---- verification (network + docker + gh) ----------------------------------
@@ -152,10 +271,9 @@ def verify_attestation(image: str, digest: str) -> dict:
     return {"source_commit": commit}
 
 
-def check_gate_report(url: str, runner: str, digest: str, token: str | None) -> tuple[str, list]:
-    """(summary, lanes_gated). Raises unless the report is valid, passed JSON for this digest."""
+def fetch_gate_report(url: str, token: str | None) -> object:
     if not url.startswith("https://"):
-        raise lib.CIError("gate_report must be an https URL")
+        raise lib.CIError("gate report must be an https URL")
     req = urllib.request.Request(url, headers={
         "Accept": "application/json", "User-Agent": "hal0-runner-images-ci",
         **({"Authorization": f"Bearer {token}"} if token and "github" in url else {}),
@@ -166,15 +284,25 @@ def check_gate_report(url: str, runner: str, digest: str, token: str | None) -> 
     except (urllib.error.URLError, OSError) as e:
         raise lib.CIError(f"gate report {url} could not be fetched: {e}")
     try:
-        report = json.loads(body)
+        return json.loads(body)
     except ValueError:
         raise lib.CIError(f"gate report {url} is not JSON; it must be a {GATE_SCHEMA} document")
-    summary = validate_gate_report(report, runner, digest)
-    lanes = report.get("lanes") or {}
-    return summary, sorted(k for k, v in lanes.items() if isinstance(v, dict) and v.get("passed") is True)
 
 
-def validate_gate_report(report: dict, runner: str, digest: str) -> str:
+def report_for(doc: object, runner: str) -> dict:
+    """One runner's document: the report itself, or its entry in a group report."""
+    if not isinstance(doc, dict) or doc.get("schema") != GATE_SCHEMA:
+        raise lib.CIError(f"gate report schema is not {GATE_SCHEMA!r}")
+    if isinstance(doc.get("runners"), list):
+        mine = [r for r in doc["runners"] if isinstance(r, dict) and r.get("runner") == runner]
+        if len(mine) != 1:
+            raise lib.CIError(f"group gate report has {len(mine)} entries for {runner!r}, expected 1")
+        return {"schema": GATE_SCHEMA, **mine[0]}
+    return doc
+
+
+def validate_gate_report(report: dict, runner: str, digest: str) -> tuple[str, list]:
+    """(summary, lanes_gated). Raises unless the report passed for this runner and digest."""
     if not isinstance(report, dict) or report.get("schema") != GATE_SCHEMA:
         raise lib.CIError(f"gate report schema is not {GATE_SCHEMA!r}")
     if report.get("runner") != runner or report.get("digest") != digest:
@@ -183,36 +311,34 @@ def validate_gate_report(report: dict, runner: str, digest: str) -> str:
         )
     failed = [p.get("name", "?") for p in report.get("probes", []) if p.get("passed") is not True]
     if report.get("passed") is not True or failed:
-        raise lib.CIError(f"gate report did not pass (failed probes: {failed or 'overall verdict'})")
+        raise lib.CIError(f"gate report for {runner} did not pass (failed probes: {failed or 'overall verdict'})")
     lanes = report.get("lanes") or {}
     passed = sorted(k for k, v in lanes.items() if isinstance(v, dict) and v.get("passed") is True)
-    return f"passed; lanes: {', '.join(passed) or 'none reported'}"
+    return f"passed; lanes: {', '.join(passed) or 'none reported'}", passed
 
 
 TAG_CHARS = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")
 
 
-def cmd_verify(args: argparse.Namespace) -> int:
-    key, digest = args.runner, args.digest
+def verify_item(item: dict, report_doc: object, report_url: str, built_keys: list[str]) -> dict:
+    key, digest = item["runner"], item["digest"]
     if not lib.KEY_RE.match(key):
         raise lib.CIError(f"invalid runner key {key!r}")
-    if not lib.DIGEST_RE.match(digest):
-        raise lib.CIError(f"digest {digest!r} is not sha256:<64 hex>")
     # A runner without runners/<key>/ is an external image (cuda): someone
     # else's image listed in the catalogue. It has no build provenance from
     # this repo, so it must come with an explicit tag.
-    external = key not in lib.runner_keys()
+    external = key not in built_keys
+    tag = item["tag"]
     if external:
         image = catalogue_entry(json.loads((lib.ROOT / CATALOGUE_FILE).read_text()), key).get("image", "")
         if not image or image.startswith(lib.PACKAGE_PREFIX):
             raise lib.CIError(f"{key!r} has no recipe here and no external image in {CATALOGUE_FILE}")
-        tag = args.tag
-        if not TAG_CHARS.match(tag or ""):
-            raise lib.CIError("an external runner needs --tag (the upstream tag that names this digest)")
+        if not TAG_CHARS.match(tag):
+            raise lib.CIError(f"{key}: an external runner is written {key}=<tag>@<digest>")
     else:
         image = lib.package_for(key)
-        if args.tag:
-            raise lib.CIError("--tag is only for external runners; built runners carry their tag in a label")
+        if tag:
+            raise lib.CIError(f"{key}: a built runner is written {key}=<digest>; its tag comes from its label")
 
     by_digest = inspect_image(f"{image}@{digest}")
     if digest_of(by_digest) != digest:
@@ -220,36 +346,52 @@ def cmd_verify(args: argparse.Namespace) -> int:
     if not external:
         tag = labels_of(by_digest).get(TAG_LABEL, "")
         if not lib.TAG_RE.match(tag):
-            raise lib.CIError(f"image label {TAG_LABEL}={tag!r} is not an immutable <version>-r<sha7> tag")
+            raise lib.CIError(f"{key}: image label {TAG_LABEL}={tag!r} is not an immutable <version>-r<sha7> tag")
     by_tag = inspect_image(f"{image}:{tag}")
     if digest_of(by_tag) != digest:
         raise lib.CIError(f"{image}:{tag} points at {digest_of(by_tag)}, not {digest}: the tag moved")
 
     source_commit = "" if external else verify_attestation(image, digest)["source_commit"]
-    summary, lanes = check_gate_report(args.gate_report, key, digest, args.token)
-
-    result = {
+    summary, lanes = validate_gate_report(report_for(report_doc, key), key, digest)
+    return {
         "runner": key, "image": image, "tag": tag, "digest": digest, "external": external,
-        "source_commit": source_commit,
-        "gate_report": args.gate_report, "gate_summary": summary,
+        "source_commit": source_commit, "gate_report": report_url, "gate_summary": summary,
         "lanes_gated": lanes,
     }
-    Path(args.out).write_text(json.dumps(result, indent=2) + "\n")
-    print(json.dumps(result, indent=2))
-    for k in ("runner", "tag", "digest"):
-        lib.set_output(k, result[k])
+
+
+def cmd_verify(args: argparse.Namespace) -> int:
+    items = parse_promotions(args.promotions)
+    urls = parse_gate_reports(args.gate_reports, [i["runner"] for i in items])
+    docs = {u: fetch_gate_report(u, args.token) for u in set(urls.values())}
+    built = lib.runner_keys()
+    results = [verify_item(i, docs[urls[i["runner"]]], urls[i["runner"]], built) for i in items]
+    branch, title = describe(results)  # also refuses a group that mixes llama.cpp releases
+
+    Path(args.out).write_text(json.dumps({"items": results}, indent=2) + "\n")
+    print(json.dumps({"items": results}, indent=2))
+    lib.set_output("branch", branch)
+    lib.set_output("title", title)
     return 0
 
 
-def _load_result(path: str) -> dict:
-    result = json.loads(Path(path).read_text())
-    for k in ("runner", "image", "tag", "digest"):
-        if not result.get(k):
-            raise lib.CIError(f"result file lacks {k!r}")
-    tag_ok = TAG_CHARS.match(result["tag"]) if result.get("external") else lib.TAG_RE.match(result["tag"])
-    if not tag_ok or not lib.DIGEST_RE.match(result["digest"]):
-        raise lib.CIError("result file has a malformed tag or digest")
-    return result
+def _load_result(path: str) -> list[dict]:
+    items = json.loads(Path(path).read_text()).get("items") or []
+    if not items:
+        raise lib.CIError("result file has no items")
+    for item in items:
+        for k in ("runner", "image", "tag", "digest", "gate_report", "lanes_gated"):
+            if k not in item or item[k] in ("", None):
+                raise lib.CIError(f"result item lacks {k!r}")
+        tag_ok = TAG_CHARS.match(item["tag"]) if item.get("external") else lib.TAG_RE.match(item["tag"])
+        if not tag_ok or not lib.DIGEST_RE.match(item["digest"]):
+            raise lib.CIError(f"{item['runner']}: malformed tag or digest in the result file")
+    return items
+
+
+def cmd_pr_body(args: argparse.Namespace) -> int:
+    sys.stdout.write(pr_body(_load_result(args.result)))
+    return 0
 
 
 def cmd_catalogue(args: argparse.Namespace) -> int:
@@ -269,13 +411,15 @@ def main(argv: list[str] | None = None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     v = sub.add_parser("verify")
-    v.add_argument("--runner", required=True)
-    v.add_argument("--digest", required=True)
-    v.add_argument("--gate-report", required=True)
+    v.add_argument("--promotions", required=True)
+    v.add_argument("--gate-reports", required=True)
     v.add_argument("--out", required=True)
     v.add_argument("--token", default=None)
-    v.add_argument("--tag", default="", help="external runners only: the upstream tag naming the digest")
     v.set_defaults(func=cmd_verify)
+
+    b = sub.add_parser("pr-body")
+    b.add_argument("--result", required=True)
+    b.set_defaults(func=cmd_pr_body)
 
     c = sub.add_parser("catalogue")
     c.add_argument("--result", required=True)

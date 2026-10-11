@@ -226,7 +226,7 @@ class PromoteTests(unittest.TestCase):
              "lanes_gated": [], "summary": "é"},
             {"key": "cpu", "image": "ghcr.io/hal0ai/hal0-runner-cpu", "tag": "t", "candidate": None},
         ]}, indent=2, ensure_ascii=False) + "\n"
-        out = json.loads(promote.edit_catalogue(raw, self.RESULT))
+        out = json.loads(promote.edit_catalogue(raw, [self.RESULT]))
         std, cpu = out["runners"]
         self.assertEqual((std["tag"], std["digest"]), (self.RESULT["tag"], DIGEST))
         self.assertIsNone(std["candidate"])
@@ -234,15 +234,15 @@ class PromoteTests(unittest.TestCase):
         self.assertEqual(std["lanes_gated"], ["rocm", "vulkan"])
         self.assertEqual(std["summary"], "é")
         self.assertEqual(cpu, {"key": "cpu", "image": "ghcr.io/hal0ai/hal0-runner-cpu", "tag": "t", "candidate": None})
-        self.assertTrue(promote.edit_catalogue(raw, self.RESULT).endswith("}\n"))
+        self.assertTrue(promote.edit_catalogue(raw, [self.RESULT]).endswith("}\n"))
 
     def test_edit_catalogue_rejects_unknown_or_mismatched_runner(self):
         raw = json.dumps({"runners": [{"key": "cpu", "image": "ghcr.io/hal0ai/hal0-runner-cpu"}]})
         with self.assertRaises(SystemExit):
-            promote.edit_catalogue(raw, self.RESULT)
+            promote.edit_catalogue(raw, [self.RESULT])
         raw = json.dumps({"runners": [{"key": "standard", "image": "ghcr.io/hal0ai/hal0-combined"}]})
         with self.assertRaises(SystemExit):
-            promote.edit_catalogue(raw, self.RESULT)
+            promote.edit_catalogue(raw, [self.RESULT])
 
     def test_dump_like_keeps_the_file_style(self):
         for kwargs in ({"indent": 2, "ensure_ascii": True}, {"indent": 4, "ensure_ascii": False}):
@@ -254,7 +254,7 @@ class PromoteTests(unittest.TestCase):
             "standard": {"image": "old", "tag": "old", "digest": "old", "lanes_gated": [], "_notes": "keep me"},
             "cpu": {"image": "i", "tag": "t", "digest": "d", "lanes_gated": ["cpu"]},
         }}, indent=2) + "\n"
-        out = json.loads(promote.edit_hal0_pins(raw, self.RESULT))
+        out = json.loads(promote.edit_hal0_pins(raw, [self.RESULT]))
         row = out[hal0_pins.HAL0_PIN_TABLE]["standard"]
         self.assertEqual(row[hal0_pins.HAL0_FIELDS["digest"]], DIGEST)
         self.assertEqual(row[hal0_pins.HAL0_FIELDS["image"]], self.RESULT["image"])
@@ -266,11 +266,11 @@ class PromoteTests(unittest.TestCase):
     def test_hal0_pin_edit_fails_closed(self):
         raw = json.dumps({hal0_pins.HAL0_PIN_TABLE: {}})
         with self.assertRaises(SystemExit):
-            promote.edit_hal0_pins(raw, self.RESULT)
-        created = json.loads(promote.edit_hal0_pins(raw, self.RESULT, create_missing=True))
+            promote.edit_hal0_pins(raw, [self.RESULT])
+        created = json.loads(promote.edit_hal0_pins(raw, [self.RESULT], create_missing=True))
         self.assertIn("standard", created[hal0_pins.HAL0_PIN_TABLE])
         with self.assertRaises(SystemExit):
-            promote.edit_hal0_pins(json.dumps({"other": {}}), self.RESULT)
+            promote.edit_hal0_pins(json.dumps({"other": {}}), [self.RESULT])
 
     def test_pin_refs_and_parse_pin_table(self):
         raw = json.dumps({hal0_pins.HAL0_PIN_TABLE: {
@@ -286,11 +286,89 @@ class PromoteTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 hal0_pins.parse_pin_table(bad, "u")
 
+    def test_parse_promotions(self):
+        d2 = "sha256:" + "c" * 64
+        items = promote.parse_promotions(f"standard={DIGEST}, cpu={d2} cuda=server-cuda-b11552@{DIGEST}")
+        self.assertEqual([i["runner"] for i in items], ["standard", "cpu", "cuda"])
+        self.assertEqual((items[2]["tag"], items[2]["digest"]), ("server-cuda-b11552", DIGEST))
+        self.assertEqual(items[0]["tag"], "")
+        for bad in ("", "standard", "standard=latest", f"standard={DIGEST},standard={DIGEST}", "Standard=" + DIGEST):
+            with self.assertRaises(SystemExit):
+                promote.parse_promotions(bad)
+
+    def test_parse_gate_reports(self):
+        keys = ["standard", "cpu"]
+        one = promote.parse_gate_reports("https://x.test/g.json", keys)
+        self.assertEqual(one, {"standard": "https://x.test/g.json", "cpu": "https://x.test/g.json"})
+        mixed = promote.parse_gate_reports("https://x.test/all.json, cpu=https://x.test/cpu.json?a=b", keys)
+        self.assertEqual(mixed["cpu"], "https://x.test/cpu.json?a=b")
+        self.assertEqual(mixed["standard"], "https://x.test/all.json")
+        for text in ("cpu=https://x.test/c.json",          # standard has no report
+                     "https://a.test/1 https://b.test/2",  # two bare URLs
+                     "http://x.test/g.json",
+                     "cuda=https://x.test/g.json https://x.test/all.json"):  # cuda is not being promoted
+            with self.assertRaises(SystemExit):
+                promote.parse_gate_reports(text, keys)
+
+    def test_group_report_picks_each_runners_entry(self):
+        def entry(k, d):
+            return {"runner": k, "digest": d, "passed": True, "lanes": {"rocm": {"passed": True}}}
+        d2 = "sha256:" + "c" * 64
+        doc = {"schema": promote.GATE_SCHEMA, "runners": [entry("standard", DIGEST), entry("cpu", d2)]}
+        self.assertEqual(promote.report_for(doc, "cpu")["digest"], d2)
+        promote.validate_gate_report(promote.report_for(doc, "standard"), "standard", DIGEST)
+        with self.assertRaises(SystemExit):
+            promote.report_for(doc, "cuda")
+        with self.assertRaises(SystemExit):
+            promote.report_for({"runners": doc["runners"]}, "cpu")  # no schema
+
+    def test_llama_group_must_name_one_release(self):
+        def item(k, tag):
+            return {"runner": k, "tag": tag, "digest": DIGEST}
+        same = [item("standard", "b11552-r1a2b3c"), item("cpu", "b11552-r2b3c4d"), item("cuda", "server-cuda-b11552")]
+        self.assertEqual(promote.check_group(same), "b11552")
+        branch, title = promote.describe(same)
+        self.assertEqual(title, "chore(runners): pin standard, cpu, cuda to llama.cpp b11552")
+        self.assertTrue(branch.startswith("bot/promote-cpu-cuda-standard-"))
+        mixed = [item("standard", "b11552-r1a2b3c"), item("cuda", "server-cuda-b11551")]
+        with self.assertRaises(SystemExit):
+            promote.check_group(mixed)
+        with self.assertRaises(SystemExit):
+            promote.check_group([item("cuda", "latest")])
+        self.assertEqual(promote.describe([item("kokoro", "1.0-r1234567")]),
+                         ("bot/promote-kokoro-1.0-r1234567", "chore(runners): pin kokoro to 1.0-r1234567"))
+        self.assertIsNone(promote.check_group([item("kokoro", "1.0-r1234567"), item("flm", "0.9.44-r1234567")]))
+
+    def test_group_edits_write_every_runner_into_one_file(self):
+        d2 = "sha256:" + "c" * 64
+        a = dict(self.RESULT)
+        b = dict(self.RESULT, runner="cpu", image="ghcr.io/hal0ai/hal0-runner-cpu", digest=d2, lanes_gated=["cpu"])
+        cat = json.dumps({"runners": [{"key": "standard", "image": a["image"]}, {"key": "cpu", "image": b["image"]}]})
+        out = json.loads(promote.edit_catalogue(cat, [a, b]))["runners"]
+        self.assertEqual([r["digest"] for r in out], [DIGEST, d2])
+        pins = json.dumps({hal0_pins.HAL0_PIN_TABLE: {"standard": {}, "cpu": {}}})
+        rows = json.loads(promote.edit_hal0_pins(pins, [a, b]))[hal0_pins.HAL0_PIN_TABLE]
+        self.assertEqual(rows["cpu"]["lanes_gated"], ["cpu"])
+        self.assertEqual(rows["standard"]["digest"], DIGEST)
+
+    def test_retention_ignores_pins_outside_our_namespace(self):
+        raw = json.dumps({hal0_pins.HAL0_PIN_TABLE: {
+            "standard": {"image": "ghcr.io/hal0ai/hal0-runner-standard", "tag": "b1-r1234567", "digest": DIGEST},
+            "cuda": {"image": "ghcr.io/ggml-org/llama.cpp", "tag": "server-cuda-b1", "digest": DIGEST},
+        }})
+        refs = hal0_pins.parse_pin_table(raw, "u")
+        self.assertTrue(refs and all(r.startswith("ghcr.io/hal0ai/") for r in refs))
+        only_external = json.dumps({hal0_pins.HAL0_PIN_TABLE: {"cuda": {"image": "ghcr.io/ggml-org/llama.cpp", "tag": "t"}}})
+        with self.assertRaises(SystemExit):  # nothing of ours left: broken table, abort
+            hal0_pins.parse_pin_table(only_external, "u")
+
     def test_gate_report_validation(self):
         good = {"schema": promote.GATE_SCHEMA, "runner": "standard", "digest": DIGEST, "passed": True,
                 "lanes": {"rocm": {"passed": True}, "vulkan": {"passed": True}},
                 "probes": [{"name": "health", "passed": True}]}
-        self.assertIn("rocm, vulkan", promote.validate_gate_report(good, "standard", DIGEST))
+        summary, lanes = promote.validate_gate_report(good, "standard", DIGEST)
+        self.assertIn("rocm, vulkan", summary)
+        self.assertEqual(lanes, ["rocm", "vulkan"])
         for mutate in (
             lambda r: r.update(passed=False),
             lambda r: r.update(digest="sha256:" + "c" * 64),

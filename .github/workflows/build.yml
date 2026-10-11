@@ -244,7 +244,8 @@ jobs:
           for r in rows:
               print(f'| `{r["runner"]}` | `{r["tag"]}` | `{r["digest"]}` |')
           print("\nNothing consumes these yet. After the hardware gate passes, run the **Promote runner image** "
-                "workflow with the runner, the digest above and the gate report URL (docs/UPDATING.md).")
+                "workflow with `runner=digest` pairs from this table and the gate report URL (docs/UPDATING.md). "
+                "A llama.cpp bump promotes standard, cpu and cuda in one run.")
           PY
           cat body.md >> "$GITHUB_STEP_SUMMARY"
           gh api -X POST "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/comments" -F "body=@body.md"
