@@ -25,9 +25,10 @@ name: GHCR retention sweep
 # an empty/failed report there is expected, not a bug.
 #
 # Sync note: hal0's runner pins reach the sweep two ways, unioned:
-# retention.py fetches hal0's machine-readable pin export at run start, and
+# retention.py fetches hal0's runner pin table (manifest.json; field names in
+# ci/hal0_pins.py) at run start, and
 # retention-allowlist.json's hal0_code_pins stays as a manually-maintained
-# local floor. Any fetch/parse failure of the export, 404 included, aborts the
+# local floor. Any fetch/parse failure of the table, 404 included, aborts the
 # run (dry-run and delete alike) before anything is planned. Digests that
 # build.yml pushed but promote.yml has not pinned yet are not protected by
 # either source. They stay safe because retention.py leaves anything it cannot

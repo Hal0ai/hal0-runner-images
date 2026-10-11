@@ -19,6 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import lib  # noqa: E402
 import plan  # noqa: E402
+import hal0_pins  # noqa: E402
 import promote  # noqa: E402
 import release_watch as rw  # noqa: E402
 
@@ -215,7 +216,7 @@ class ReleaseWatchTests(unittest.TestCase):
 class PromoteTests(unittest.TestCase):
     RESULT = {"runner": "standard", "image": "ghcr.io/hal0ai/hal0-runner-standard",
               "tag": "b11552-r1a2b3c4", "digest": DIGEST,
-              "gate_report": "https://example.test/report.json", "gate_machine_verified": True,
+              "gate_report": "https://example.test/report.json",
               "lanes_gated": ["rocm", "vulkan"]}
 
     def test_edit_catalogue_moves_candidate_to_pin_and_touches_nothing_else(self):
@@ -235,11 +236,6 @@ class PromoteTests(unittest.TestCase):
         self.assertEqual(cpu, {"key": "cpu", "image": "ghcr.io/hal0ai/hal0-runner-cpu", "tag": "t", "candidate": None})
         self.assertTrue(promote.edit_catalogue(raw, self.RESULT).endswith("}\n"))
 
-    def test_lanes_are_not_set_from_a_report_that_was_not_machine_checked(self):
-        raw = json.dumps({"runners": [{"key": "standard", "image": self.RESULT["image"], "lanes_gated": ["vulkan"]}]})
-        res = dict(self.RESULT, gate_machine_verified=False, lanes_gated=[])
-        self.assertEqual(json.loads(promote.edit_catalogue(raw, res))["runners"][0]["lanes_gated"], ["vulkan"])
-
     def test_edit_catalogue_rejects_unknown_or_mismatched_runner(self):
         raw = json.dumps({"runners": [{"key": "cpu", "image": "ghcr.io/hal0ai/hal0-runner-cpu"}]})
         with self.assertRaises(SystemExit):
@@ -254,25 +250,38 @@ class PromoteTests(unittest.TestCase):
             self.assertEqual(promote.dump_like(json.loads(raw), raw), raw)
 
     def test_hal0_pin_edit_updates_one_row_and_keeps_the_rest(self):
-        raw = json.dumps({"version": 1, promote.HAL0_PIN_TABLE: {
+        raw = json.dumps({"version": 1, hal0_pins.HAL0_PIN_TABLE: {
             "standard": {"image": "old", "tag": "old", "digest": "old", "_notes": "keep me"},
             "cpu": {"image": "i", "tag": "t", "digest": "d"},
         }}, indent=2) + "\n"
         out = json.loads(promote.edit_hal0_pins(raw, self.RESULT))
-        row = out[promote.HAL0_PIN_TABLE]["standard"]
-        self.assertEqual(row[promote.HAL0_FIELDS["digest"]], DIGEST)
-        self.assertEqual(row[promote.HAL0_FIELDS["image"]], self.RESULT["image"])
+        row = out[hal0_pins.HAL0_PIN_TABLE]["standard"]
+        self.assertEqual(row[hal0_pins.HAL0_FIELDS["digest"]], DIGEST)
+        self.assertEqual(row[hal0_pins.HAL0_FIELDS["image"]], self.RESULT["image"])
         self.assertEqual(row["_notes"], "keep me")
-        self.assertEqual(out[promote.HAL0_PIN_TABLE]["cpu"]["tag"], "t")
+        self.assertEqual(out[hal0_pins.HAL0_PIN_TABLE]["cpu"]["tag"], "t")
 
     def test_hal0_pin_edit_fails_closed(self):
-        raw = json.dumps({promote.HAL0_PIN_TABLE: {}})
+        raw = json.dumps({hal0_pins.HAL0_PIN_TABLE: {}})
         with self.assertRaises(SystemExit):
             promote.edit_hal0_pins(raw, self.RESULT)
         created = json.loads(promote.edit_hal0_pins(raw, self.RESULT, create_missing=True))
-        self.assertIn("standard", created[promote.HAL0_PIN_TABLE])
+        self.assertIn("standard", created[hal0_pins.HAL0_PIN_TABLE])
         with self.assertRaises(SystemExit):
             promote.edit_hal0_pins(json.dumps({"other": {}}), self.RESULT)
+
+    def test_pin_refs_and_parse_pin_table(self):
+        raw = json.dumps({hal0_pins.HAL0_PIN_TABLE: {
+            "standard": {"image": "ghcr.io/hal0ai/hal0-runner-standard", "tag": "b1-r1234567", "digest": DIGEST},
+            "cpu": {"image": "ghcr.io/hal0ai/hal0-runner-cpu", "tag": None, "digest": None},
+        }})
+        self.assertEqual(hal0_pins.parse_pin_table(raw, "u"), [
+            "ghcr.io/hal0ai/hal0-runner-standard:b1-r1234567", f"ghcr.io/hal0ai/hal0-runner-standard@{DIGEST}"])
+        for bad in ("not json", "[]", "{}", json.dumps({hal0_pins.HAL0_PIN_TABLE: {}}),
+                    json.dumps({hal0_pins.HAL0_PIN_TABLE: {"a": "x"}}),
+                    json.dumps({hal0_pins.HAL0_PIN_TABLE: {"a": {"tag": "t"}}})):
+            with self.assertRaises(SystemExit):
+                hal0_pins.parse_pin_table(bad, "u")
 
     def test_gate_report_validation(self):
         good = {"schema": promote.GATE_SCHEMA, "runner": "standard", "digest": DIGEST, "passed": True,

@@ -121,7 +121,7 @@ jobs:
           if r["source_commit"]:
               print(f"- built from `{r['source_commit']}` of Hal0ai/hal0-runner-images (signed build provenance, refs/heads/main)")
           print(f"- gate report: {r['gate_report']}")
-          print(f"- gate result: {r['gate_summary']}" + ("" if r["gate_machine_verified"] else " (not machine-checked: read the report before merging)"))
+          print(f"- gate result: {r['gate_summary']}")
           print()
           print("Promoted by the Promote runner image workflow in Hal0ai/hal0-runner-images "
                 "(docs/UPDATING.md). It verified that the digest exists, that the build workflow on main produced it, "

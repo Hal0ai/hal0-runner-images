@@ -81,11 +81,11 @@ published at an `https` URL, with this shape:
 }
 ```
 
-Promote refuses a report whose `schema` differs, whose `runner` or `digest` is
-not the one being promoted, whose `passed` is not `true`, or that lists any probe
-with `passed` other than `true`. Leave host names and addresses out of the
-report: this repository is public. A URL that serves something other than JSON
-(a PR comment, say) is accepted, and the pin PRs then say "not machine-checked".
+Promote refuses a report that is not valid `hal0.gate-report.v1` JSON, whose
+`runner` or `digest` is not the one being promoted, whose `passed` is not `true`,
+or that lists any probe with `passed` other than `true`. There is no "read it by
+hand" path. Leave host names and addresses out of the report: this repository is
+public.
 
 ## 5. Promote: `promote.yml`
 
@@ -101,7 +101,7 @@ Then it opens two PRs and merges neither:
 
 - **this repo:** `images.json` gets that runner's `tag` and `digest`, its
   `candidate` is cleared, and `gate_report` and `lanes_gated` are set from the
-  report (lanes whose `passed` is true; only when the report was machine-checked);
+  report (the lanes whose `passed` is true);
 - **Hal0ai/hal0:** the runner's row in the pin table of `manifest.json`, and no
   other file (the job aborts if anything else changed).
 
@@ -109,8 +109,9 @@ Then it opens two PRs and merges neither:
 extra `tag` input; it then checks the digest and tag in the registry but cannot
 check build provenance.
 
-The field names hal0 expects live in one commented block at the top of
-`ci/promote.py` (`HAL0_PIN_TABLE`, `HAL0_FIELDS`, `HAL0_TAG_IS_FULL_REF`).
+The field names hal0 expects live in one commented block, `ci/hal0_pins.py`
+(`HAL0_PIN_TABLE`, `HAL0_FIELDS`, `HAL0_TAG_IS_FULL_REF`). The GHCR retention
+sweep reads the same table, so it never deletes an image hal0 pins.
 
 ## 6. Boxes
 

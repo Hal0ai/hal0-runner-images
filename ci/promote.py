@@ -10,8 +10,8 @@ package (an external runner such as cuda, which has no recipe here, is checked
 for existence and tag only, and needs --tag), (b) built by .github/workflows/build.yml on refs/heads/main (checked
 through the build's signed provenance attestation, not through the tag), (c)
 reachable under its immutable tag at that same digest, and (d) backed by a gate
-report that names the same digest and passed (when the report is fetchable
-JSON; otherwise the PR says the report was not machine-checked).
+report that is valid hal0.gate-report.v1 JSON, names the same digest and passed.
+Anything else, including a report that is not JSON, fails the run.
 
 `catalogue` edits only tag/digest of one runner in images.json.
 `hal0-pin` edits only one row of the runner pin table in Hal0ai/hal0.
@@ -32,23 +32,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import lib  # noqa: E402
-
-# ---------------------------------------------------------------------------
-# THE ONE MAPPING TO ADJUST when hal0's runner-pin table lands.
-#
-# hal0 is moving every runner pin into a single table in its manifest.json:
-#     key -> {image, tag, digest}
-# Everything promote writes into Hal0ai/hal0 is derived from this block and
-# from hal0_row() below. Nothing else in this file knows hal0's field names.
-# ---------------------------------------------------------------------------
-HAL0_PIN_FILE = "manifest.json"          # the ONLY file the hal0 PR may touch
-HAL0_PIN_TABLE = "runner_images"         # top-level object in that file (key -> row)  [PLACEHOLDER: confirm against the hal0 PR]
-HAL0_FIELDS = {                          # our value -> hal0 row field
-    "image": "image",                    # ghcr.io/hal0ai/hal0-runner-<key>
-    "tag": "tag",                        # <upstream-version>-r<recipe-sha7>
-    "digest": "digest",                  # sha256:... of the GATED image
-}
-HAL0_TAG_IS_FULL_REF = False             # True if hal0's `tag` holds "<image>:<tag>" (the old toolbox_images style)
+from hal0_pins import HAL0_FIELDS, HAL0_PIN_FILE, HAL0_PIN_TABLE, hal0_row  # noqa: E402,F401  (hal0 field names live in hal0_pins.py)
 
 # ---------------------------------------------------------------------------
 # images.json (this repo), schema hal0.runner-images.v2: a `runners` array of
@@ -63,16 +47,6 @@ SIGNER_WORKFLOW = f"{lib.REPO_SLUG}/.github/workflows/build.yml"
 SOURCE_REF = "refs/heads/main"
 GATE_SCHEMA = "hal0.gate-report.v1"
 TAG_LABEL = "org.opencontainers.image.version"
-
-
-def hal0_row(result: dict) -> dict:
-    """The fields promote sets on the hal0 row, under hal0's field names."""
-    values = {
-        "image": result["image"],
-        "tag": f"{result['image']}:{result['tag']}" if HAL0_TAG_IS_FULL_REF else result["tag"],
-        "digest": result["digest"],
-    }
-    return {HAL0_FIELDS[k]: v for k, v in values.items()}
 
 
 # ---- JSON file editing (pure, tested) --------------------------------------
@@ -110,9 +84,7 @@ def edit_catalogue(raw: str, result: dict) -> str:
     entry["digest"] = result["digest"]
     entry["candidate"] = None
     entry["gate_report"] = result["gate_report"]
-    # Lanes are admitted by evidence: set only from a report we could read.
-    if result.get("gate_machine_verified"):
-        entry["lanes_gated"] = result["lanes_gated"]
+    entry["lanes_gated"] = result["lanes_gated"]  # lanes are admitted by evidence
     return dump_like(doc, raw)
 
 
@@ -121,7 +93,7 @@ def edit_hal0_pins(raw: str, result: dict, create_missing: bool = False) -> str:
     table = doc.get(HAL0_PIN_TABLE)
     if not isinstance(table, dict):
         raise lib.CIError(f"hal0 {HAL0_PIN_FILE}: no object named {HAL0_PIN_TABLE!r}; "
-                          "adjust HAL0_PIN_TABLE in ci/promote.py to the table hal0 actually has")
+                          "adjust ci/hal0_pins.py to the table hal0 actually has")
     key = result["runner"]
     if key not in table:
         if not create_missing:
@@ -180,8 +152,8 @@ def verify_attestation(image: str, digest: str) -> dict:
     return {"source_commit": commit}
 
 
-def check_gate_report(url: str, runner: str, digest: str, token: str | None) -> tuple[bool, str, list]:
-    """(machine_verified, summary, lanes_gated). Raises on a report that fetches and fails."""
+def check_gate_report(url: str, runner: str, digest: str, token: str | None) -> tuple[str, list]:
+    """(summary, lanes_gated). Raises unless the report is valid, passed JSON for this digest."""
     if not url.startswith("https://"):
         raise lib.CIError("gate_report must be an https URL")
     req = urllib.request.Request(url, headers={
@@ -196,10 +168,10 @@ def check_gate_report(url: str, runner: str, digest: str, token: str | None) -> 
     try:
         report = json.loads(body)
     except ValueError:
-        return False, "report is not machine-readable JSON; a reviewer must read it", []
+        raise lib.CIError(f"gate report {url} is not JSON; it must be a {GATE_SCHEMA} document")
     summary = validate_gate_report(report, runner, digest)
     lanes = report.get("lanes") or {}
-    return True, summary, sorted(k for k, v in lanes.items() if isinstance(v, dict) and v.get("passed") is True)
+    return summary, sorted(k for k, v in lanes.items() if isinstance(v, dict) and v.get("passed") is True)
 
 
 def validate_gate_report(report: dict, runner: str, digest: str) -> str:
@@ -254,12 +226,12 @@ def cmd_verify(args: argparse.Namespace) -> int:
         raise lib.CIError(f"{image}:{tag} points at {digest_of(by_tag)}, not {digest}: the tag moved")
 
     source_commit = "" if external else verify_attestation(image, digest)["source_commit"]
-    verified, summary, lanes = check_gate_report(args.gate_report, key, digest, args.token)
+    summary, lanes = check_gate_report(args.gate_report, key, digest, args.token)
 
     result = {
         "runner": key, "image": image, "tag": tag, "digest": digest, "external": external,
         "source_commit": source_commit,
-        "gate_report": args.gate_report, "gate_machine_verified": verified, "gate_summary": summary,
+        "gate_report": args.gate_report, "gate_summary": summary,
         "lanes_gated": lanes,
     }
     Path(args.out).write_text(json.dumps(result, indent=2) + "\n")

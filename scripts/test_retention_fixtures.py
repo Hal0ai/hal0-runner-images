@@ -14,6 +14,7 @@ which rule broke.
 
 from __future__ import annotations
 
+import json
 import sys
 from datetime import datetime, timedelta, timezone
 
@@ -29,6 +30,7 @@ from retention import (  # noqa: E402
     render_outcomes_section,
     render_pin_sources_section,
 )
+import hal0_pins  # noqa: E402  (retention.py puts ci/ on sys.path)
 
 NOW = datetime(2026, 8, 30, tzinfo=timezone.utc)
 
@@ -379,28 +381,28 @@ check_text(
 # (bad JSON, wrong shape, non-string/empty entries, ZERO pins) aborts loudly.
 # ---------------------------------------------------------------------------
 
-pins = parse_hal0_pins_export(
-    '{"source": "src/hal0/config/schema.py", "pins": ["ghcr.io/hal0ai/hal0-combined:0826"]}',
-    "https://example.invalid/pins.json",
-)
-if pins == ["ghcr.io/hal0ai/hal0-combined:0826"]:
-    print("ok: valid pins export parses")
+_PIN_TABLE = hal0_pins.HAL0_PIN_TABLE
+_F = hal0_pins.HAL0_FIELDS
+_ROW = {_F["image"]: "ghcr.io/hal0ai/hal0-runner-standard", _F["tag"]: "b1-r1234567", _F["digest"]: "sha256:" + "a" * 64}
+_GOOD_PINS = json.dumps({_PIN_TABLE: {"standard": _ROW}})
+_EXPECTED_REFS = ["ghcr.io/hal0ai/hal0-runner-standard:b1-r1234567", "ghcr.io/hal0ai/hal0-runner-standard@sha256:" + "a" * 64]
+
+pins = parse_hal0_pins_export(_GOOD_PINS, "https://example.invalid/manifest.json")
+if pins == _EXPECTED_REFS:
+    print("ok: valid pin table parses to tag and digest refs")
 else:
-    FAILURES.append(f"valid pins export: unexpected result {pins!r}")
+    FAILURES.append(f"valid pin table: unexpected result {pins!r}")
 
 check_raises("pins export: invalid JSON aborts", parse_hal0_pins_export, "not json {", "u")
 check_raises("pins export: non-dict aborts", parse_hal0_pins_export, '["just", "a", "list"]', "u")
-check_raises("pins export: missing pins key aborts", parse_hal0_pins_export, '{"source": "x"}', "u")
-check_raises("pins export: pins not a list aborts", parse_hal0_pins_export, '{"pins": "oops"}', "u")
+check_raises("pins export: missing table aborts", parse_hal0_pins_export, '{"version": 1}', "u")
+check_raises("pins export: table not an object aborts", parse_hal0_pins_export, json.dumps({_PIN_TABLE: "oops"}), "u")
+check_raises("pins export: row not an object aborts", parse_hal0_pins_export, json.dumps({_PIN_TABLE: {"a": "x"}}), "u")
 check_raises(
-    "pins export: non-string entry aborts", parse_hal0_pins_export, '{"pins": ["ok:tag", 42]}', "u"
+    "pins export: row without image aborts",
+    parse_hal0_pins_export, json.dumps({_PIN_TABLE: {"a": {_F["tag"]: "t"}}}), "u",
 )
-check_raises(
-    "pins export: empty-string entry aborts", parse_hal0_pins_export, '{"pins": [""]}', "u"
-)
-check_raises(
-    "pins export: ZERO pins aborts (broken export)", parse_hal0_pins_export, '{"pins": []}', "u"
-)
+check_raises("pins export: ZERO pins aborts (broken table)", parse_hal0_pins_export, json.dumps({_PIN_TABLE: {}}), "u")
 
 
 # ---------------------------------------------------------------------------
@@ -433,7 +435,7 @@ def _with_stubbed_urlopen(fake, fn, *args):
 
 
 def _fake_ok(req, timeout=None):
-    return _FakeResponse(b'{"source": "src/hal0/config/schema.py", "pins": ["ghcr.io/hal0ai/hal0-combined:0826"]}')
+    return _FakeResponse(_GOOD_PINS.encode())
 
 
 def _fake_404(req, timeout=None):
@@ -443,7 +445,7 @@ def _fake_404(req, timeout=None):
 
 
 fetched = _with_stubbed_urlopen(_fake_ok, fetch_hal0_pins_export, "https://example.invalid/pins.json")
-if fetched == ["ghcr.io/hal0ai/hal0-combined:0826"]:
+if fetched == _EXPECTED_REFS:
     print("ok: stubbed fetch success returns pins")
 else:
     FAILURES.append(f"stubbed fetch success: unexpected result {fetched!r}")
