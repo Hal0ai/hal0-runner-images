@@ -291,6 +291,15 @@ class ParserTests(unittest.TestCase):
         nodes = ("Import times for custom nodes:\n   0.0 seconds: /opt/ComfyUI/custom_nodes/ComfyUI_essentials\n"
                  "   0.2 seconds (IMPORT FAILED): /opt/ComfyUI/custom_nodes/ComfyUI-GGUF\n")
         self.assertEqual(gate.custom_node_status(nodes), {"ComfyUI_essentials": True, "ComfyUI-GGUF": False})
+        # ComfyUI 0.28 prefixes each line with a coloured log level, even when not on a tty
+        colored = ("\x1b[32m[INFO]\x1b[0m Import times for custom nodes:\n"
+                   "\x1b[32m[INFO]\x1b[0m    0.0 seconds: /opt/ComfyUI/custom_nodes/websocket_image_save.py\n"
+                   "\x1b[32m[INFO]\x1b[0m    0.0 seconds: /opt/ComfyUI/custom_nodes/ComfyUI-AMDGPUMonitor\n"
+                   "\x1b[32m[INFO]\x1b[0m    0.0 seconds (IMPORT FAILED): /opt/ComfyUI/custom_nodes/ComfyUI-GGUF\n"
+                   "\x1b[32m[INFO]\x1b[0m    0.1 seconds: /opt/ComfyUI/custom_nodes/ComfyUI_essentials\n")
+        self.assertEqual(gate.custom_node_status(colored),
+                         {"websocket_image_save.py": True, "ComfyUI-AMDGPUMonitor": True,
+                          "ComfyUI-GGUF": False, "ComfyUI_essentials": True})
         png = b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\x0dIHDR" + struct.pack(">II", 1024, 768) + b"\x08\x02"
         self.assertEqual(gate.png_size(png), (1024, 768))
         self.assertAlmostEqual(gate.word_recall("Ask not what your country", "ask NOT what your county"), 0.8)

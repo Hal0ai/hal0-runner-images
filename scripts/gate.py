@@ -715,9 +715,13 @@ def draft_stats(timings: dict, logs: str) -> tuple[int | None, int | None]:
 
 
 def custom_node_status(logs: str) -> dict[str, bool]:
-    """ComfyUI's "Import times for custom nodes" lines: name -> imported."""
+    """ComfyUI's "Import times for custom nodes" lines: name -> imported.
+
+    ComfyUI 0.28 prefixes every log line with a coloured level, `\\x1b[32m[INFO]\\x1b[0m`,
+    even when stdout is not a terminal; the escapes are stripped and the level skipped."""
     out: dict[str, bool] = {}
-    for m in re.finditer(r"^\s*[0-9.]+ seconds( \(IMPORT FAILED\))?: (.+?)\s*$", logs, re.M):
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", logs)
+    for m in re.finditer(r"^(?:\[[A-Z]+\])?\s*[0-9.]+ seconds( \(IMPORT FAILED\))?: (.+?)\s*$", plain, re.M):
         out[Path(m.group(2)).name] = not m.group(1)
     return out
 
