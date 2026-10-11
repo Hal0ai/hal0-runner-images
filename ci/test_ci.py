@@ -460,6 +460,35 @@ class PromoteTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 promote.validate_gate_report(bad, "standard", DIGEST)
 
+    def test_gate_report_fetch_sends_the_token_only_to_api_hosts_and_never_on_a_redirect(self):
+        seen = []
+
+        class Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self, n=-1):
+                return b'{"schema": "hal0.gate-report.v1"}'
+
+        def fake_urlopen(req, timeout=None):
+            seen.append(req)
+            return Resp()
+
+        real = promote.urllib.request.urlopen
+        promote.urllib.request.urlopen = fake_urlopen
+        try:
+            asset = "https://github.com/Hal0ai/hal0-runner-images/releases/download/gate-cpu-b1-r1234567/r.json"
+            promote.fetch_gate_report(asset, "tok")
+            promote.fetch_gate_report("https://api.github.com/repos/x/y/contents/r.json", "tok")
+        finally:
+            promote.urllib.request.urlopen = real
+        self.assertFalse(seen[0].has_header("Authorization"))
+        self.assertEqual(seen[1].unredirected_hdrs.get("Authorization"), "Bearer tok")
+        self.assertNotIn("Authorization", seen[1].headers)  # so a redirect does not carry it
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=1)

@@ -1,0 +1,54 @@
+# gates/cpu.toml: the hardware gate for runners/cpu (docs/UPDATING.md section 4).
+#
+# scripts/gate.py runs exactly this file against a published image@digest:
+#   python3 scripts/gate.py cpu --digest sha256:<digest>
+# It lives outside runners/cpu/ so that changing a probe never changes the
+# image tag or rebuilds the image. Format: docs/RECIPES.md, "gates/<key>.toml".
+
+#: Run by scripts/gate.py (docs/UPDATING.md section 4) on the Strix Halo box,
+#: with no GPU device passed through. {path:KEY} is a model file from the
+#: operator's gate-models.toml.
+boxes = ["any x86_64 box with no GPU passed through", "the Strix Halo box"]
+
+[lanes.cpu]
+server_args = ["-ngl", "0"]
+
+[[probe]]
+name = "version"
+doc = "llama-server --version reports the release pinned in runners/llama.cpp.toml"
+kind = "exec"
+lanes = []
+args = ["--version"]
+expect = ["version: {version_digits}\\b"]
+
+[[probe]]
+name = "no-gpu-devices"
+doc = "llama-server --list-devices shows no GPU"
+kind = "exec"
+lanes = []
+args = ["--list-devices"]
+reject = ["ROCm\\d", "Vulkan\\d", "CUDA\\d"]
+
+[[probe]]
+name = "no-avx512-host"
+doc = "the same request on a host without AVX-512 (any GitHub runner) answers, no SIGILL; the Strix Halo box has AVX-512, so the gate cannot show this"
+kind = "elsewhere"
+
+[[session]]
+name = "lfm"
+doc = "a small GGUF on the CPU, with the --port hal0 renders (llama-server's own default is 9931 since #30159)"
+args = ["-m", "{path:lfm2.5-2.6b}", "-c", "4096", "--port", "8080"]
+port = 8080
+mem_extra_gib = 2
+
+  [[session.check]]
+  name = "health"
+  doc = "the hal0 slot renders --port and /health answers on it"
+  kind = "http-json"
+
+  [[session.check]]
+  name = "paris"
+  doc = "loads with -ngl 0 and answers a temp-0 prompt"
+  kind = "completion"
+  prompt = "The capital of France is"
+  expect = "Paris"

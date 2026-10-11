@@ -10,6 +10,9 @@ No network, no container runtime. Checks:
     unknown fields, and every recipe has exactly one matching entry;
   * every runners/<key>/manifest.toml passes scripts/runner.py's validation
     and carries [verification] and [lifecycle] (with a release-aware track);
+  * every runner has a gates/<key>.toml that scripts/gate.py accepts (the
+    hardware gate; external runners such as cuda have none), and no gate file
+    names a runner that does not exist;
   * every Containerfile takes its base images from manifest build args pinned
     by digest, declares no pin defaults of its own, and clones no branch;
   * Python dependency files pin exact versions;
@@ -31,6 +34,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import gate  # noqa: E402
 import runner  # noqa: E402
 from retention import parse_allowlist_ref  # noqa: E402
 
@@ -180,6 +184,26 @@ def test_manifests() -> None:
                   f"runners/{key}: turn the web UI off with upstream's current option names")
 
 
+def test_gates() -> None:
+    keys = runner.keys()
+    for key in keys:
+        path = ROOT / "gates" / f"{key}.toml"
+        if not path.is_file():
+            failures.append(f"runners/{key}: no gates/{key}.toml (the hardware gate scripts/gate.py runs)")
+            continue
+        try:
+            doc = tomllib.loads(path.read_text())
+        except tomllib.TOMLDecodeError as e:
+            failures.append(f"gates/{key}.toml: {e}")
+            continue
+        # The same validator the gate runs before it starts.
+        for p in gate.validate_gate(doc, runner.load(key)["runner"]["backends"]):
+            failures.append(f"gates/{key}.toml: {p}")
+    for path in sorted((ROOT / "gates").glob("*")):
+        check(path.suffix == ".toml" and path.stem in keys,
+              f"gates/{path.name}: not a gate for a runner built here (external runners such as cuda have none)")
+
+
 def containerfile_args(text: str) -> tuple[dict[str, str | None], list[str]]:
     """ARG name -> default (None when it has none), and every FROM operand."""
     args: dict[str, str | None] = {}
@@ -308,7 +332,7 @@ def test_no_lan_addresses() -> None:
 
 
 def main() -> int:
-    for t in (test_catalogue_shape, test_catalogue_matches_recipes, test_manifests, test_containerfiles,
+    for t in (test_catalogue_shape, test_catalogue_matches_recipes, test_manifests, test_gates, test_containerfiles,
               test_python_pins, test_llama_release, test_standard_entrypoint, test_no_retired_names,
               test_allowlist, test_no_lan_addresses):
         before = len(failures)
