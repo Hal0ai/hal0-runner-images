@@ -419,9 +419,87 @@ class Models:
 # ---------------------------------------------------------------------------
 
 NODE_MEMINFO = "/sys/devices/system/node/node0/meminfo"
-#: One gate at a time per host (Host.lock). HAL0_GATE_LOCK overrides the path.
-LOCK_FILE = "/tmp/hal0-gate.lock"
+#: One gate at a time per host (Host.lock). Not /tmp, $TMPDIR or
+#: $XDG_RUNTIME_DIR: another user can pre-create or delete a file there, and
+#: the gate runs as root. HAL0_GATE_LOCK overrides the path (same checks).
+LOCK_FILE = "/run/lock/hal0-gate.lock"
 LOCK_ENV = "HAL0_GATE_LOCK"
+
+
+def lock_problem(st: os.stat_result, dir_st: os.stat_result, euid: int) -> str:
+    """Why a lock file (st) in its directory (dir_st) cannot be trusted, or ''.
+
+    Trusted: a regular, singly linked file owned by root or by us, writable by
+    nobody else, in a directory owned by root or by us that others cannot write
+    to, or that is sticky (so only the file's owner may remove or replace it).
+    """
+    import stat as st_
+    owners = {0, euid}
+    if not st_.S_ISDIR(dir_st.st_mode):
+        return "its directory is not a directory"
+    if dir_st.st_uid not in owners:
+        return f"its directory is owned by uid {dir_st.st_uid}"
+    if dir_st.st_mode & 0o022 and not dir_st.st_mode & st_.S_ISVTX:
+        return "its directory is writable by others and not sticky"
+    if not st_.S_ISREG(st.st_mode):
+        return "it is not a regular file"
+    if st.st_uid not in owners:
+        return f"it is owned by uid {st.st_uid}, not root or this user"
+    if st.st_mode & 0o022:
+        return f"it is writable by others (mode {st.st_mode & 0o777:o})"
+    if st.st_nlink != 1:
+        return f"it has {st.st_nlink} hard links"
+    return ""
+
+
+def open_lock(path: str, euid: int | None = None) -> int:
+    """Open (creating it 0644 if missing) and flock the host gate lock; return the fd.
+
+    Never follows a symlink, never trusts a file someone else could replace,
+    and checks after locking that the path still names the locked file.
+    """
+    euid = os.geteuid() if euid is None else euid
+    flags = os.O_NOFOLLOW | os.O_CLOEXEC
+    try:
+        fd = os.open(path, os.O_RDONLY | flags)
+    except FileNotFoundError:
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | flags, 0o644)
+            os.fchmod(fd, 0o644)
+        except FileExistsError:
+            fd = os.open(path, os.O_RDONLY | flags)
+        except OSError as e:
+            raise GateError(f"cannot create the host gate lock {path} ({e}); run the gate as root, "
+                            f"or set {LOCK_ENV} to a file in a directory only the gate operators can write")
+    except OSError as e:  # ELOOP: a symlink
+        raise GateError(f"refusing the host gate lock {path}: {e}")
+    try:
+        problem = lock_problem(os.fstat(fd), os.stat(os.path.dirname(os.path.abspath(path))), euid)
+        if problem:
+            raise GateError(f"refusing the host gate lock {path}: {problem}. Remove it as root, "
+                            f"or set {LOCK_ENV} to a protected path")
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            raise GateError(f"another scripts/gate.py run holds {path}; one gate at a time on a host")
+        now, mine = os.stat(path, follow_symlinks=False), os.fstat(fd)
+        if (now.st_dev, now.st_ino) != (mine.st_dev, mine.st_ino):
+            raise GateError(f"the host gate lock {path} was replaced while it was being taken")
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def write_new(path: Path, text: str) -> None:
+    """Create a file that does not exist yet; never follow a symlink or overwrite
+    (the gate runs as root and the report name is predictable)."""
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o644)
+    except FileExistsError:
+        raise GateError(f"{path} already exists; choose another --out")
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
 
 
 def parse_meminfo(text: str) -> dict[str, int]:
@@ -1175,28 +1253,8 @@ class Host:
         return True
 
     def lock(self) -> None:
-        """One gate at a time on this host, whoever runs it: two would load two
-        models at once. One fixed path for every user (not $TMPDIR or
-        $XDG_RUNTIME_DIR, which are per user), mode 0666. An existing file is
-        opened without O_CREAT, which fs.protected_regular would refuse for a
-        file another user created in /tmp."""
-        path = os.environ.get(LOCK_ENV) or LOCK_FILE
-        try:
-            fd = os.open(path, os.O_RDWR)
-        except FileNotFoundError:
-            try:
-                fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o666)
-                os.fchmod(fd, 0o666)
-            except FileExistsError:
-                fd = os.open(path, os.O_RDWR)
-        except OSError as e:
-            raise GateError(f"cannot open the host gate lock {path}: {e}")
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            os.close(fd)
-            raise GateError(f"another scripts/gate.py run holds {path}; one gate at a time on a host")
-        self._lock = fd
+        """One gate at a time on this host: two would load two models at once."""
+        self._lock = open_lock(os.environ.get(LOCK_ENV) or LOCK_FILE)
 
     def cleanup(self) -> None:
         for name in sorted(self.containers):
@@ -1994,7 +2052,7 @@ def main(argv: list[str] | None = None, host: Host | None = None) -> int:
     tag = reports[0]["tag"] if len(reports) == 1 else runner.load(keys[0])["image"]["version"]
     stamp = date.strftime("%Y%m%dT%H%M%SZ")
     out = Path(args.out or f"gate-{subject}-{tag}-{stamp}.json")
-    out.write_text(json.dumps(doc, indent=2) + "\n")
+    write_new(out, json.dumps(doc, indent=2) + "\n")
     self_check(doc, digests)
     for r in reports:
         verdict = "PASSED" if r["passed"] else "FAILED"

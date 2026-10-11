@@ -114,11 +114,24 @@ so that changing a probe never changes an image tag. For each runner it:
    own limit), takes the lower, and refuses a load that would leave less than
    `--headroom-gib` (default 8 GiB) available. While a server loads it is stopped
    if available memory falls below half of that;
-4. removes every container it started, on success, failure or Ctrl-C, and on
-   start removes any `gate-<key>-<pid>-*` container whose run (`<pid>`) no longer
-   exists. A lock on `/tmp/hal0-gate.lock` (one path for every user, mode 0666;
-   `HAL0_GATE_LOCK` overrides it) keeps a second gate from starting on the host
-   while one runs, whoever starts it.
+4. removes every container it started, on success, failure or Ctrl-C. On start
+   it removes only `gate-<key>-<pid>-*` containers whose run (`<pid>`) no longer
+   exists, so a live run's containers are never touched.
+
+One gate runs per host. Every run takes a lock on one fixed path,
+`/run/lock/hal0-gate.lock`, never a per-user or `/tmp` location. The gate runs
+as root, and another user could pre-create, swap or delete a file there. It
+creates the file itself (mode 0644, never following a symlink) and refuses one
+that it cannot trust:
+
+- a file owned by anyone but root or the operator;
+- a file writable by others, or with more than one hard link;
+- a file in a directory others can write to that is not sticky.
+
+After taking the lock it checks that the path still names the locked file.
+`HAL0_GATE_LOCK` points it elsewhere under the same checks. The report is
+written the same way: it is created new, never written through a symlink and
+never overwritten.
 
 It never touches hal0's slots, units or configuration, but it shares the GPU
 and memory with them: run it in an agreed GPU window. Its containers are named
@@ -138,7 +151,7 @@ under rootful podman.
 | `--models`, `--models-dir` | `gate-models.toml` (default `$HAL0_GATE_MODELS`, then `~/.config/hal0/gate-models.toml`); the base for its relative paths |
 | `--allow-skip PROBE` | a probe, or a glob such as `vulkan/*` or `brain-sft-*`, whose skip does not fail the gate. Repeatable |
 | `--headroom-gib` | the memory floor, default 8 |
-| `--out` | the report file (default `gate-<runner or group>-<tag>-<UTC stamp>.json`) |
+| `--out` | the report file, which must not exist yet (default `gate-<runner or group>-<tag>-<UTC stamp>.json`) |
 | `--upload` | publish a passing report (below) and print its URL |
 
 Exit status 0 means passed, 1 failed, 2 the gate could not run.

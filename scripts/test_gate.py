@@ -569,24 +569,66 @@ class GateRunTests(unittest.TestCase):
 
     def test_one_gate_at_a_time(self):
         import os
-        self.assertEqual(gate.LOCK_FILE, "/tmp/hal0-gate.lock")  # one path for every user, not $TMPDIR
+        self.assertEqual(gate.LOCK_FILE, "/run/lock/hal0-gate.lock")  # never /tmp or a per-user dir
         with tempfile.TemporaryDirectory() as d:
+            path = str(Path(d) / "hal0-gate.lock")
             old = os.environ.get(gate.LOCK_ENV)
-            os.environ[gate.LOCK_ENV] = str(Path(d) / "hal0-gate.lock")
+            os.environ[gate.LOCK_ENV] = path
             try:
                 first, second = gate.Host(verbose=False), gate.Host(verbose=False)
                 first.lock()
+                self.assertEqual(os.stat(path).st_mode & 0o777, 0o644)
                 with self.assertRaises(SystemExit):
                     second.lock()
                 first.cleanup()
                 second.lock()  # free again once the first run is done
                 second.cleanup()
-                self.assertEqual(os.stat(os.environ[gate.LOCK_ENV]).st_mode & 0o777, 0o666)
             finally:
                 if old is None:
                     os.environ.pop(gate.LOCK_ENV)
                 else:
                     os.environ[gate.LOCK_ENV] = old
+
+    def test_the_lock_refuses_files_someone_else_could_replace(self):
+        import os
+        with tempfile.TemporaryDirectory() as d:
+            loose = Path(d) / "loose.lock"
+            loose.write_text("")
+            loose.chmod(0o666)  # writable by others
+            with self.assertRaises(SystemExit):
+                gate.open_lock(str(loose))
+            target = Path(d) / "target"
+            target.write_text("")
+            link = Path(d) / "link.lock"
+            link.symlink_to(target)  # a planted symlink is never followed
+            with self.assertRaises(SystemExit):
+                gate.open_lock(str(link))
+            shared = Path(d) / "shared"
+            shared.mkdir()
+            shared.chmod(0o777)  # anyone could swap the file: refused
+            with self.assertRaises(SystemExit):
+                gate.open_lock(str(shared / "hal0-gate.lock"))
+            shared.chmod(0o1777)  # sticky, like /tmp or Debian's /run/lock: our own file is safe
+            os.close(gate.open_lock(str(shared / "hal0-gate.lock")))
+        st = os.stat_result
+        good_dir = st((0o40755, 0, 0, 1, 0, 0, 0, 0, 0, 0))
+        good = st((0o100644, 0, 0, 1, 0, 0, 0, 0, 0, 0))
+        self.assertEqual(gate.lock_problem(good, good_dir, 1000), "")
+        self.assertIn("owned by uid 1001", gate.lock_problem(st((0o100644, 0, 0, 1, 1001, 0, 0, 0, 0, 0)), good_dir, 0))
+        self.assertIn("hard links", gate.lock_problem(st((0o100644, 0, 0, 2, 0, 0, 0, 0, 0, 0)), good_dir, 0))
+        self.assertIn("directory is owned", gate.lock_problem(good, st((0o40755, 0, 0, 1, 1001, 0, 0, 0, 0, 0)), 0))
+
+    def test_the_report_is_never_written_through_a_symlink_or_over_a_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            gate.write_new(Path(d) / "r.json", "{}")
+            with self.assertRaises(SystemExit):
+                gate.write_new(Path(d) / "r.json", "{}")
+            victim = Path(d) / "victim"
+            victim.write_text("keep")
+            (Path(d) / "planted.json").symlink_to(victim)
+            with self.assertRaises(SystemExit):
+                gate.write_new(Path(d) / "planted.json", "{}")
+            self.assertEqual(victim.read_text(), "keep")
 
     def test_an_unconfigured_model_is_a_skip(self):
         self.models.entries.clear()
