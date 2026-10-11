@@ -118,6 +118,32 @@ def ghcr_tags(image: str, timeout: int = 30) -> list[str]:
         raise CIError(f"could not list the tags of {image}: {e}")
 
 
+def ghcr_digest(image: str, tag: str, timeout: int = 30) -> str:
+    """The content digest a public ghcr.io tag points at right now."""
+    repo = image.removeprefix("ghcr.io/")
+    accept = ", ".join((
+        "application/vnd.oci.image.index.v1+json", "application/vnd.oci.image.manifest.v1+json",
+        "application/vnd.docker.distribution.manifest.list.v2+json",
+        "application/vnd.docker.distribution.manifest.v2+json",
+    ))
+    try:
+        with urllib.request.urlopen(
+            f"https://ghcr.io/token?service=ghcr.io&scope=repository:{repo}:pull", timeout=timeout
+        ) as resp:
+            token = json.loads(resp.read())["token"]
+        req = urllib.request.Request(
+            f"https://ghcr.io/v2/{repo}/manifests/{tag}", method="HEAD",
+            headers={"Authorization": f"Bearer {token}", "Accept": accept},
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            digest = resp.headers.get("Docker-Content-Digest", "")
+    except (urllib.error.URLError, OSError, ValueError, KeyError) as e:
+        raise CIError(f"could not resolve {image}:{tag}: {e}")
+    if not DIGEST_RE.match(digest):
+        raise CIError(f"{image}:{tag} gave no usable digest ({digest!r})")
+    return digest
+
+
 def dump_like(doc: object, raw: str) -> str:
     """Serialise `doc` the way the JSON text `raw` was written, so a diff shows only the edit."""
     original = json.loads(raw)

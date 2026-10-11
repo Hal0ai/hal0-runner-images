@@ -88,6 +88,9 @@ def edit_catalogue(raw: str, items: list[dict]) -> str:
         entry = catalogue_entry(doc, item["runner"])
         if entry.get("image") and entry["image"] != item["image"]:
             raise lib.CIError(f"{CATALOGUE_FILE}: entry image {entry['image']!r} != {item['image']!r}")
+        extra = sorted(set(item["lanes_gated"]) - set(entry.get("backends") or item["lanes_gated"]))
+        if extra:
+            raise lib.CIError(f"{item['runner']}: gate report passed lanes {extra} that the runner does not list in backends")
         entry["tag"] = item["tag"]
         entry["digest"] = item["digest"]
         for field, value in (("candidate", None), ("gate_report", item["gate_report"]),

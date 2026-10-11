@@ -27,40 +27,34 @@ OLD_SHA = "c35b66744f13cb0dcc476af063e112122eee9355"
 NEW_SHA = "a" * 40
 DIGEST = "sha256:" + "b" * 64
 
+PIN = '''# The one llama.cpp release
+[llama_cpp]
+repo = "https://github.com/ggml-org/llama.cpp.git"
+#: Release {version}: notes that describe the old release stay as written.
+version = "{version}"   # release tag
+ref = "{ref}"
+ref_description = "release {version}: old subject"
+
+[other]
+version = "must-not-change"
+'''
 MANIFEST = '''# runners/{key}
 [runner]
 key = "{key}"
 
-[image]
-#: Must equal runners/standard [image].version
-version = "{version}"
-
 [source]
-repo = "https://github.com/ggml-org/llama.cpp.git"
-#: Release {version}: notes that describe the old release stay as written.
-ref = "{ref}"   # pinned commit
-release = "{version}"
-checkout = true
-
-[verification]
-#: comment mentioning release {version} stays
-probes = [
-    "llama-server --version reports release {version}; --list-devices shows only the CPU",
-    "structured output failed with 'Failed to initialize samplers' at {version}; informational",
-]
-
-[lifecycle]
-purpose = "release {version} is not touched here"
+pin = "llama.cpp.toml"
 '''
 
 
-def make_tree(root: Path, runners: dict[str, dict]) -> None:
+def make_tree(root: Path, runners: dict[str, dict], pin: dict | None = None) -> None:
     (root / "runners").mkdir(parents=True, exist_ok=True)
+    if pin is not None:
+        (root / "runners" / "llama.cpp.toml").write_text(PIN.format(**pin))
     for key, spec in runners.items():
         d = root / "runners" / key
         d.mkdir(parents=True)
-        (d / "manifest.toml").write_text(spec.get("manifest") or MANIFEST.format(
-            key=key, version=spec.get("version", "b11510"), ref=spec.get("ref", OLD_SHA)))
+        (d / "manifest.toml").write_text(spec.get("manifest") or MANIFEST.format(key=key))
 
 
 class LibTests(unittest.TestCase):
@@ -83,10 +77,15 @@ class PlanTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
-        make_tree(self.root, {"standard": {}, "cpu": {}, "kokoro": {}})
+        make_tree(self.root, {"standard": {}, "cpu": {}, "kokoro": {"manifest": "[runner]\nkey = 'kokoro'\n"}})
 
     def tearDown(self):
         self.tmp.cleanup()
+
+    def test_shared_pin_file_selects_the_runners_that_name_it(self):
+        keys = lib.runner_keys(self.root)
+        self.assertEqual(plan.select_changed(keys, ["runners/llama.cpp.toml"], self.root), ["cpu", "standard"])
+        self.assertEqual(plan.select_changed(keys, ["runners/other.toml"], self.root), [])
 
     def test_path_filter(self):
         keys = lib.runner_keys(self.root)
@@ -140,48 +139,61 @@ class ReleaseWatchTests(unittest.TestCase):
             if "releases?per_page" in path:
                 return rels
             if "/commits/" in path:
-                return {"sha": NEW_SHA}
+                return {"sha": NEW_SHA, "commit": {"message": "server: fix a thing (#1)\n\nlong body"}}
             raise AssertionError(f"/releases/latest must not be used for llama.cpp: {path}")
         return api
+
+    def _catalogue(self, root, tag=None, candidate=None):
+        (root / "images.json").write_text(json.dumps({"schema": "hal0.runner-images.v2", "runners": [
+            {"id": "standard", "tag": None, "digest": None},
+            {"id": "cuda", "image": "ghcr.io/ggml-org/llama.cpp", "tag": tag, "digest": None, "candidate": candidate},
+        ]}, indent=2) + "\n")
 
     def test_takes_highest_b_tag_including_prereleases_not_drafts(self):
         self.assertEqual(rw.latest_release(self._api())["tag_name"], "b11552")
 
-    def test_rewrite_manifest_changes_only_the_pin_and_the_release_probe(self):
-        text = MANIFEST.format(key="cpu", version="b11510", ref=OLD_SHA)
-        new, n = rw.rewrite_manifest(text, "b11552", NEW_SHA, "b11510")
-        self.assertEqual(n, 4)  # version, ref, release, one probe
+    def test_rewrite_pin_touches_only_the_pin_table_and_keeps_comments(self):
+        text = PIN.format(version="b11510", ref=OLD_SHA)
+        new, n = rw.rewrite_pin(text, {"version": "b11552", "ref": NEW_SHA, "ref_description": 'release b11552: say "hi"'})
+        self.assertEqual(n, 3)
         doc = tomllib.loads(new)
-        self.assertEqual((doc["image"]["version"], doc["source"]["release"], doc["source"]["ref"]), ("b11552", "b11552", NEW_SHA))
-        self.assertEqual(doc["verification"]["probes"][0], "llama-server --version reports release b11552; --list-devices shows only the CPU")
-        # history is not rewritten: another probe, comments and unrelated tables keep the old release
-        self.assertIn("at b11510; informational", doc["verification"]["probes"][1])
+        self.assertEqual((doc["llama_cpp"]["version"], doc["llama_cpp"]["ref"]), ("b11552", NEW_SHA))
+        self.assertEqual(doc["llama_cpp"]["ref_description"], 'release b11552: say "hi"')
+        self.assertEqual(doc["other"]["version"], "must-not-change")
         self.assertIn("#: Release b11510: notes", new)
-        self.assertIn("#: comment mentioning release b11510 stays", new)
-        self.assertIn('purpose = "release b11510 is not touched here"', new)
-        self.assertIn("# pinned commit", new)  # trailing comment kept
+        self.assertIn("# release tag", new)
 
-    def test_bump_moves_both_runners_and_nothing_else(self):
+    def test_bump_rewrites_only_the_pin_file(self):
         with tempfile.TemporaryDirectory() as t:
             root = Path(t)
-            make_tree(root, {"standard": {}, "cpu": {}, "kokoro": {"version": "1.0", "ref": "v1.0"}})
-            kokoro_before = (root / "runners/kokoro/manifest.toml").read_text()
+            make_tree(root, {"standard": {}, "cpu": {}}, pin={"version": "b11510", "ref": OLD_SHA})
+            before = (root / "runners/standard/manifest.toml").read_text()
             bump = rw.run(root, self._api(), apply=True)
 
             self.assertEqual((bump.previous, bump.tag, bump.commit), ("b11510", "b11552", NEW_SHA))
-            self.assertEqual(sorted(bump.files), ["runners/cpu/manifest.toml", "runners/standard/manifest.toml"])
-            for key in ("standard", "cpu"):
-                doc = tomllib.loads((root / "runners" / key / "manifest.toml").read_text())
-                self.assertEqual((doc["image"]["version"], doc["source"]["release"], doc["source"]["ref"]),
-                                 ("b11552", "b11552", NEW_SHA))
-            self.assertEqual((root / "runners/kokoro/manifest.toml").read_text(), kokoro_before)
+            self.assertEqual(bump.files, ["runners/llama.cpp.toml"])
+            self.assertEqual((bump.branch, bump.title), ("bot/bump-llama-cpp-b11552", "chore(runners): bump llama.cpp to b11552"))
+            pin = tomllib.loads((root / "runners/llama.cpp.toml").read_text())["llama_cpp"]
+            self.assertEqual((pin["version"], pin["ref"]), ("b11552", NEW_SHA))
+            self.assertEqual(pin["ref_description"], "release b11552: server: fix a thing (#1)")
+            self.assertEqual((root / "runners/standard/manifest.toml").read_text(), before)
 
-    def _cuda_tree(self, root, cuda_tag, version="b11510", ref=OLD_SHA):
-        make_tree(root, {"standard": {"version": version, "ref": ref}, "cpu": {"version": version, "ref": ref}})
-        (root / "images.json").write_text(json.dumps({"schema": "hal0.runner-images.v2", "runners": [
-            {"id": "standard", "tag": None, "digest": None},
-            {"id": "cuda", "image": "ghcr.io/ggml-org/llama.cpp", "tag": cuda_tag, "digest": DIGEST},
-        ]}, indent=2) + "\n")
+    def test_current_pin_means_no_bump_and_dry_run_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            make_tree(root, {}, pin={"version": "b11552", "ref": NEW_SHA})
+            self.assertIsNone(rw.run(root, self._api(), apply=True))
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            make_tree(root, {}, pin={"version": "b11510", "ref": OLD_SHA})
+            before = (root / "runners/llama.cpp.toml").read_text()
+            self.assertEqual(rw.run(root, self._api(), apply=False).tag, "b11552")
+            self.assertEqual((root / "runners/llama.cpp.toml").read_text(), before)
+
+    def test_missing_pin_file_fails_loudly(self):
+        with tempfile.TemporaryDirectory() as t:
+            with self.assertRaises(SystemExit):
+                rw.run(Path(t), self._api(), apply=True)
 
     def test_newest_cuda_tag_not_ahead_of_the_release(self):
         tags = ["server-cuda-b11541", "server-cuda-b11515", "server-cuda-b11553", "server-cuda12-b11552",
@@ -191,54 +203,36 @@ class ReleaseWatchTests(unittest.TestCase):
         self.assertEqual(rw.newest_cuda_tag(tags, "b11500"), "server-cuda-b9")
         self.assertIsNone(rw.newest_cuda_tag(["server-b1"], "b11552"))
 
-    def test_bump_moves_the_cuda_row_to_the_newest_tag_that_exists(self):
+    def test_bump_sets_the_cuda_candidate_to_the_newest_tag_that_exists(self):
         with tempfile.TemporaryDirectory() as t:
             root = Path(t)
-            self._cuda_tree(root, "server-cuda-b11515")
+            make_tree(root, {"standard": {}}, pin={"version": "b11510", "ref": OLD_SHA})
+            self._catalogue(root, candidate={"tag": "server-cuda-b11515", "digest": DIGEST})
             tags = ["server-cuda-b11515", "server-cuda-b11541", "server-cuda-b11553"]  # b11553 is ahead of b11552
-            bump = rw.run(root, self._api(), apply=True, cuda_tags=lambda: tags)
+            bump = rw.run(root, self._api(), apply=True, cuda_tags=lambda: tags, cuda_digest=lambda tag: "sha256:" + "d" * 64)
             self.assertEqual((bump.tag, bump.cuda_tag), ("b11552", "server-cuda-b11541"))
             self.assertEqual(bump.title, "chore(runners): bump llama.cpp to b11552 and cuda to server-cuda-b11541")
             self.assertEqual(bump.branch, "bot/bump-llama-cpp-b11552-cuda-b11541")
-            self.assertIn("images.json", bump.files)
+            self.assertEqual(sorted(bump.files), ["images.json", "runners/llama.cpp.toml"])
             row = json.loads((root / "images.json").read_text())["runners"][1]
-            self.assertEqual((row["tag"], row["digest"]), ("server-cuda-b11541", None))
+            self.assertEqual(row["candidate"], {"tag": "server-cuda-b11541", "digest": "sha256:" + "d" * 64})
+            self.assertIsNone(row["tag"])  # the gated pin is promote's to move
             self.assertIn("server-cuda-b11541", rw.pr_body(bump))
 
-    def test_cuda_alone_can_move_when_the_pin_is_current(self):
+    def test_cuda_alone_moves_when_the_pin_is_current_and_nothing_newer_means_no_pr(self):
         with tempfile.TemporaryDirectory() as t:
             root = Path(t)
-            self._cuda_tree(root, "server-cuda-b11515", version="b11552", ref=NEW_SHA)
-            before = (root / "runners/standard/manifest.toml").read_text()
-            bump = rw.run(root, self._api(), apply=True, cuda_tags=lambda: ["server-cuda-b11541"])
+            make_tree(root, {"standard": {}}, pin={"version": "b11552", "ref": NEW_SHA})
+            self._catalogue(root, tag="server-cuda-b11515")
+            before = (root / "runners/llama.cpp.toml").read_text()
+            digest = lambda tag: "sha256:" + "d" * 64  # noqa: E731
+            bump = rw.run(root, self._api(), apply=True, cuda_tags=lambda: ["server-cuda-b11541"], cuda_digest=digest)
             self.assertIsNone(bump.tag)
             self.assertEqual(bump.branch, "bot/bump-llama-cpp-cuda-b11541")
-            self.assertEqual((root / "runners/standard/manifest.toml").read_text(), before)
             self.assertEqual(bump.files, ["images.json"])
-            # nothing newer: no bump at all
-            self.assertIsNone(rw.run(root, self._api(), apply=True, cuda_tags=lambda: ["server-cuda-b11541"]))
-
-    def test_current_pin_means_no_bump_and_dry_run_writes_nothing(self):
-        with tempfile.TemporaryDirectory() as t:
-            root = Path(t)
-            make_tree(root, {"standard": {"version": "b11552", "ref": NEW_SHA}})
-            self.assertIsNone(rw.run(root, self._api(), apply=True))
-        with tempfile.TemporaryDirectory() as t:
-            root = Path(t)
-            make_tree(root, {"standard": {}, "cpu": {}})
-            before = (root / "runners/standard/manifest.toml").read_text()
-            self.assertEqual(rw.run(root, self._api(), apply=False).tag, "b11552")
-            self.assertEqual((root / "runners/standard/manifest.toml").read_text(), before)
-
-    def test_missing_or_unreadable_pin_fails_loudly(self):
-        with tempfile.TemporaryDirectory() as t:
-            with self.assertRaises(SystemExit):
-                rw.run(Path(t), self._api(), apply=True)
-        with tempfile.TemporaryDirectory() as t:
-            root = Path(t)
-            make_tree(root, {"standard": {"manifest": "[source]\nrelease = 'b1'\n"}})
-            with self.assertRaises(SystemExit):
-                rw.run(root, self._api(), apply=True)
+            self.assertEqual((root / "runners/llama.cpp.toml").read_text(), before)
+            # the candidate now holds the newest tag: running again finds nothing to do
+            self.assertIsNone(rw.run(root, self._api(), apply=True, cuda_tags=lambda: ["server-cuda-b11541"], cuda_digest=digest))
 
 
 class PromoteTests(unittest.TestCase):
@@ -263,6 +257,12 @@ class PromoteTests(unittest.TestCase):
         self.assertEqual(std["summary"], "é")
         self.assertEqual(cpu, {"key": "cpu", "image": "ghcr.io/hal0ai/hal0-runner-cpu", "tag": "t", "candidate": None})
         self.assertTrue(promote.edit_catalogue(raw, [self.RESULT]).endswith("}\n"))
+
+    def test_gate_lanes_must_be_backends_of_the_runner(self):
+        raw = json.dumps({"runners": [{"id": "standard", "image": self.RESULT["image"], "backends": ["vulkan"],
+                                       "tag": None, "digest": None, "lanes_gated": []}]})
+        with self.assertRaises(SystemExit):  # the gate report passed rocm, which standard (here) does not list
+            promote.edit_catalogue(raw, [self.RESULT])
 
     def test_catalogue_without_optional_fields_gets_only_tag_and_digest(self):
         raw = json.dumps({"schema": "hal0.runner-images.v2", "runners": [

@@ -16,22 +16,23 @@ release-watch  ->  bump PR  ->  merge  ->  candidate  ->  gate  ->  promote  -> 
 
 ## 1. Find a newer upstream: `release-watch.yml`
 
-Mondays 06:17 UTC, or dispatch. `standard` and `cpu` pin the same llama.cpp
-release, each in its own `manifest.toml`. The watch compares ggml-org's newest
-`b<N>` release with it and, if newer, opens **one** PR that moves both:
-`[image].version`, `[source].release` and `[source].ref` (the tag's commit), and
-the `release <old>` sentence in a `[verification]` probe. An older open bump PR
-is closed as superseded.
+Mondays 06:17 UTC, or dispatch. `standard` and `cpu` build from one llama.cpp
+release pin, `runners/llama.cpp.toml` (`[llama_cpp]` `version`, `ref`,
+`ref_description`); their manifests only point at it. The watch compares
+ggml-org's newest `b<N>` release with the pin and, if newer, opens **one** PR that
+rewrites that file, and nothing else in `runners/`. An older open bump PR is
+closed as superseded.
 
-The `cuda` row of `images.json` follows: the newest `server-cuda-b<M>` tag in
-GHCR with M at or below the pinned release (ggml-org skips releases, and the
-registry's tag list is read in full to find it); its digest is cleared until that
-tag is gated. When only `cuda` has a newer tag, the PR moves only that row.
+The external `cuda` row of `images.json` follows through its `candidate`:
+ggml-org does not publish `server-cuda` for every release, so the candidate is
+the newest `server-cuda-b<M>` tag in GHCR with M at or below the pinned release,
+with the digest that tag resolves to (the registry's tag list is read in full to
+find it). When only `cuda` has a newer tag, the PR moves only that candidate.
 
-The PR does not touch comments, patches or other probes; its checklist lists them
-for a person. Read the upstream changes
-before merging: these images run with GPU access on people's machines, and a pin
-only protects them if someone reads what changed.
+The PR does not touch the `#:` notes in the pin file or the `[verification]`
+probes; its checklist lists them for a person. Read the upstream changes before
+merging: these images run with GPU access on people's machines, and a pin only
+protects them if someone reads what changed.
 
 (ggml-org marks every `b<N>` tag a prerelease, so GitHub's "latest release" is
 an unrelated old one. The watch lists releases and takes the highest `b<N>`.)
@@ -44,9 +45,11 @@ matches, upstream API silent) needs attention. To take a new version, edit that
 runner's recipe in an ordinary PR:
 
 1. Read the upstream changes between the old pin and the new one.
-2. Edit `manifest.toml`: `[source].ref` (full SHA) and `[source].release`, or
-   `[source].version` plus the matching line in `requirements.txt` for PyPI
-   sources; `[image].version`; base images as `image@sha256:<digest>`.
+2. Edit `manifest.toml` as `docs/RECIPES.md` describes: `[source].ref` (full SHA)
+   and `[source].release`, or `[source].version` plus the matching line in
+   `requirements.txt` for PyPI sources; `[image].version`; base images as
+   `image@sha256:<digest>`. (`standard` and `cpu` take their llama.cpp release from
+   `runners/llama.cpp.toml` instead.)
 3. Re-check each patch's `drop_when`, and re-read `[verification]` and `[lifecycle]`.
 4. `python3 scripts/runner.py build <key> --check` and
    `python3 scripts/test_repo_consistency.py` locally.
@@ -192,12 +195,14 @@ Defined in the docstring of `ci/lib.py`. If the layout changes, change it there.
   and `build <key> --tag <ref>` (never pushes). `list` needs full git history.
 - The image's `org.opencontainers.image.version` label equals its immutable tag.
   Promote reads the tag from it.
-- `standard` and `cpu` hold the llama.cpp release in `[image].version`,
-  `[source].release` and `[source].ref`; the keys are listed at the top of
-  `ci/release_watch.py`.
+- `runners/llama.cpp.toml` holds the one llama.cpp release (`[llama_cpp]`
+  `version`, `ref`, `ref_description`); `standard` and `cpu` name it with
+  `[source] pin = "llama.cpp.toml"`, which is also how a change to it selects them
+  for a rebuild. The keys are listed at the top of `ci/release_watch.py`.
 - `images.json` is `hal0.runner-images.v2`: a `runners` array keyed by `id`, with
-  `image`, `tag` and `digest` (null until gated). Promote also clears `candidate`
-  and sets `gate_report` and `lanes_gated`, on entries that have those fields.
+  `image`, `tag`, `digest` (null until gated), `candidate`, `gate_report` and
+  `lanes_gated`. Promote sets `tag` and `digest`, clears `candidate`, and sets
+  `gate_report` and `lanes_gated`; the lanes must be among the entry's `backends`.
 
 ## Adding a runner
 

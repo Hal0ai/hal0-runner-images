@@ -1,28 +1,23 @@
 #!/usr/bin/env python3
 """Prepare ONE llama.cpp bump when ggml-org has a newer release.
 
-    python3 ci/release_watch.py --json-file result.json            # report only
-    python3 ci/release_watch.py --apply --json-file result.json    # also rewrite files
+    python3 ci/release_watch.py --json-file result.json --body-file pr.md            # report only
+    python3 ci/release_watch.py --apply --json-file result.json --body-file pr.md    # also rewrite files
 
-`standard` and `cpu` pin the same llama.cpp release, each in its own
-manifest.toml ([image].version, [source].release, [source].ref). --apply moves
-both together, so one PR bumps them as one:
+`standard`, `cpu` and the external `cuda` entry share one llama.cpp release,
+runners/llama.cpp.toml (`[llama_cpp]` version, ref, ref_description). --apply
+rewrites that file when ggml-org's newest `b<N>` release is newer, and nothing
+else: the runner manifests only point at it.
 
-  [image].version   the release tag, e.g. b11552 (first half of the image tag)
-  [source].release  the release tag
-  [source].ref      the commit the tag points at (full SHA)
-  [verification]    a probe sentence "release <old>" becomes "release <new>"
+The `cuda` row of images.json follows the pin through its `candidate`. ggml-org
+does not publish server-cuda for every release, so the candidate is the newest
+`server-cuda-b<M>` tag in GHCR with M at or below the pinned release, with the
+digest that tag resolves to now. When only cuda has a newer tag, the PR moves
+only that candidate. Nothing is gated or pinned here: promote.yml does that.
 
-The external `cuda` row of images.json follows too: ggml-org does not publish
-server-cuda for every release, so it takes the newest `server-cuda-b<M>` tag
-with M <= the pinned release (GHCR tag list), and its digest is cleared until
-that tag is gated. When only cuda has a newer tag, the PR moves only that row.
-
-Comments, patches and probes that merely mention the old release (a record of
-what failed at b11510, say) are NOT touched: the PR body lists them for a person. The other runners are report-only; that is
-scripts/source_watch.py, which the workflow runs next to this.
-
-It builds nothing, pushes nothing and calls only the public GitHub API.
+The other runners are report-only; that is scripts/source_watch.py, which the
+workflow runs next to this. This builds nothing, pushes nothing and calls only
+public APIs.
 
 ggml-org tags every `b<N>` release as a *prerelease*, so GET /releases/latest
 returns an old unrelated release (v0.6.0 on 2026-10-11). We list releases and
@@ -46,19 +41,17 @@ import lib  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # THE ONE MAPPING to adjust if the recipes side moves the pin.
-AUTO_BUMP = ("standard", "cpu")          # runners that share one llama.cpp release
-LEAD = "standard"                        # the runner whose manifest says what is pinned now
+PIN_FILE = "runners/llama.cpp.toml"
+PIN_TABLE = "llama_cpp"
+PIN_VERSION_KEY = "version"              # release tag, e.g. "b11552"
+PIN_REF_KEY = "ref"                      # full commit sha of that tag
+PIN_DESC_KEY = "ref_description"         # "release <tag>: <commit subject>"
 UPSTREAM = "ggml-org/llama.cpp"
 TAG_RE = r"^b\d+$"
-CUDA_ID = "cuda"                          # the images.json row
+CATALOGUE = "images.json"
+CUDA_ID = "cuda"                         # the images.json row that follows the pin
 CUDA_IMAGE = "ghcr.io/ggml-org/llama.cpp"
 CUDA_TAG_RE = re.compile(r"^server-cuda-b(\d+)$")
-CATALOGUE = "images.json"
-# manifest table -> key -> what to write ("release" tag or "commit" sha)
-MANIFEST_KEYS = {
-    "image": {"version": "release"},
-    "source": {"release": "release", "ref": "commit"},
-}
 # ---------------------------------------------------------------------------
 
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
@@ -67,14 +60,15 @@ Api = Callable[[str], object]
 
 @dataclass
 class Bump:
-    release: str                # the pinned release after this change
-    previous: str               # the pinned release before it
-    tag: str | None             # new release when standard/cpu move, else None
+    release: str                          # the pinned release after this change
+    previous: str                         # the pinned release before it
+    tag: str | None                       # new release when the pin moves, else None
     commit: str | None
     url: str | None
     compare_url: str | None
-    cuda_previous: str | None
-    cuda_tag: str | None        # new cuda tag when that row moves, else None
+    cuda_previous: str | None             # cuda candidate tag before (or its pinned tag)
+    cuda_tag: str | None                  # new cuda candidate tag, else None
+    cuda_digest: str | None = None
     branch: str = ""
     title: str = ""
     files: list[str] = field(default_factory=list)
@@ -97,104 +91,104 @@ def latest_release(api: Api) -> dict | None:
     return max(ok, key=lambda r: version_key(r["tag_name"]) or (0,)) if ok else None
 
 
-def resolve_commit(tag: str, api: Api) -> str:
-    sha = (api(f"/repos/{UPSTREAM}/commits/{tag}") or {}).get("sha", "")
+def resolve_commit(tag: str, api: Api) -> tuple[str, str]:
+    """(sha, first line of the commit message) of a release tag."""
+    data = api(f"/repos/{UPSTREAM}/commits/{tag}") or {}
+    sha = data.get("sha", "")
     if not SHA40.match(sha):
         raise lib.CIError(f"could not resolve {UPSTREAM}@{tag} to a commit")
-    return sha
+    subject = ((data.get("commit") or {}).get("message") or "").splitlines()[0:1]
+    return sha, (subject[0] if subject else "")
 
 
-# ---- file rewriting -------------------------------------------------------
+# ---- the pin file ---------------------------------------------------------
 
 def _kv_re(key: str) -> re.Pattern:
     return re.compile(r'^(\s*' + re.escape(key) + r'\s*=\s*)(["\'])(.*?)\2(.*)$')
 
 
-def rewrite_manifest(text: str, release: str, commit: str, old_release: str) -> tuple[str, int]:
-    """Set the pin keys (MANIFEST_KEYS) and the "release <old>" verification probes.
-
-    Returns (new text, number of lines changed). Comment lines are never touched.
-    """
-    values = {"release": release, "commit": commit}
-    out, table, changed = [], "", 0
-    probe = re.compile(r"(?<![A-Za-z0-9])release " + re.escape(old_release) + r"(?![A-Za-z0-9])")
+def rewrite_pin(text: str, values: dict[str, str]) -> tuple[str, int]:
+    """Set string keys inside [PIN_TABLE] only. Comments are never touched."""
+    out, inside, changed = [], False, 0
     for line in text.splitlines(keepends=True):
         stripped = line.strip()
         if stripped.startswith("["):
-            table = stripped.split("#")[0].strip().strip("[]")
-        elif stripped.startswith("#"):
-            pass
-        elif table in MANIFEST_KEYS:
-            for key, what in MANIFEST_KEYS[table].items():
+            inside = stripped.split("#")[0].strip() == f"[{PIN_TABLE}]"
+        elif inside and not stripped.startswith("#"):
+            for key, val in values.items():
                 m = _kv_re(key).match(line.rstrip("\r\n"))
                 if m:
                     nl = line[len(line.rstrip("\r\n")):]
-                    line = f"{m.group(1)}{m.group(2)}{values[what]}{m.group(2)}{m.group(4)}{nl}"
+                    safe = val.replace("\\", "\\\\").replace('"', '\\"')
+                    line = f"{m.group(1)}{m.group(2)}{safe}{m.group(2)}{m.group(4)}{nl}"
                     changed += 1
                     break
-        elif table == "verification" and probe.search(line):
-            line = probe.sub(f"release {release}", line)
-            changed += 1
         out.append(line)
     return "".join(out), changed
 
 
-def read_pin(root: Path, key: str = LEAD) -> dict:
-    path = root / "runners" / key / "manifest.toml"
+def read_pin(root: Path) -> dict:
+    path = root / PIN_FILE
     if not path.is_file():
-        raise lib.CIError(f"runners/{key}/manifest.toml does not exist")
-    doc = tomllib.loads(path.read_text())
-    release, ref = (doc.get("source") or {}).get("release"), (doc.get("source") or {}).get("ref")
-    if not release or not ref:
-        raise lib.CIError(f"runners/{key}/manifest.toml: [source].release and [source].ref are required")
-    return {"release": release, "ref": ref}
+        raise lib.CIError(f"{PIN_FILE} does not exist")
+    table = tomllib.loads(path.read_text()).get(PIN_TABLE) or {}
+    for k in (PIN_VERSION_KEY, PIN_REF_KEY):
+        if not isinstance(table.get(k), str) or not table[k]:
+            raise lib.CIError(f"{PIN_FILE}: [{PIN_TABLE}].{k} missing or empty")
+    return {"release": table[PIN_VERSION_KEY], "ref": table[PIN_REF_KEY]}
 
 
-def apply_bump(root: Path, old_release: str, new_tag: str, new_commit: str) -> list[str]:
-    """Rewrite every AUTO_BUMP manifest. Returns touched paths."""
-    touched: list[str] = []
-    for key in AUTO_BUMP:
-        path = root / "runners" / key / "manifest.toml"
-        if not path.is_file():
-            continue
-        text, n = rewrite_manifest(path.read_text(), new_tag, new_commit, old_release)
-        doc = tomllib.loads(text)
-        if (doc["image"]["version"], doc["source"]["release"], doc["source"]["ref"]) != (new_tag, new_tag, new_commit) or n < 3:
-            raise lib.CIError(f"runners/{key}/manifest.toml: could not rewrite the pin ({n} lines changed)")
-        path.write_text(text)
-        touched.append(f"runners/{key}/manifest.toml")
-    return touched
+def apply_pin(root: Path, tag: str, commit: str, subject: str) -> str:
+    path = root / PIN_FILE
+    desc = f"release {tag}: {subject}" if subject else f"release {tag}"
+    values = {PIN_VERSION_KEY: tag, PIN_REF_KEY: commit}
+    if PIN_DESC_KEY in (tomllib.loads(path.read_text()).get(PIN_TABLE) or {}):
+        values[PIN_DESC_KEY] = desc
+    text, n = rewrite_pin(path.read_text(), values)
+    parsed = tomllib.loads(text)[PIN_TABLE]
+    if n != len(values) or parsed[PIN_VERSION_KEY] != tag or parsed[PIN_REF_KEY] != commit:
+        raise lib.CIError(f"{PIN_FILE}: could not rewrite the pin ({n} of {len(values)} keys)")
+    path.write_text(text)
+    return PIN_FILE
 
+
+# ---- the cuda row ---------------------------------------------------------
 
 def newest_cuda_tag(tags: list[str], release: str) -> str | None:
     """The newest server-cuda-b<M> with M <= the pinned release number."""
-    limit = version_key(release)[0]  # type: ignore[index]
+    limit = (version_key(release) or (0,))[0]
     found = [(int(m.group(1)), t) for t in tags if (m := CUDA_TAG_RE.match(t)) and int(m.group(1)) <= limit]
     return max(found)[1] if found else None
 
 
-def apply_cuda(root: Path, new_tag: str) -> str:
+def cuda_row(doc: dict) -> dict | None:
+    rows = [e for e in doc.get("runners", []) if e.get("id") == CUDA_ID or e.get("key") == CUDA_ID]
+    return rows[0] if len(rows) == 1 else None
+
+
+def cuda_reference(row: dict) -> str | None:
+    """The newest cuda tag already recorded: the candidate's, else the pinned one."""
+    cand = (row.get("candidate") or {}).get("tag")
+    return cand or row.get("tag")
+
+
+def apply_cuda(root: Path, tag: str, digest: str) -> str:
     path = root / CATALOGUE
     raw = path.read_text()
     doc = json.loads(raw)
-    rows = [e for e in doc.get("runners", []) if e.get("id") == CUDA_ID or e.get("key") == CUDA_ID]
-    if len(rows) != 1:
-        raise lib.CIError(f"{CATALOGUE}: expected one {CUDA_ID!r} row, found {len(rows)}")
-    rows[0]["tag"] = new_tag
-    rows[0]["digest"] = None  # the old digest belonged to the old tag; promote re-pins it
+    row = cuda_row(doc)
+    if row is None:
+        raise lib.CIError(f"{CATALOGUE}: expected one {CUDA_ID!r} row")
+    row["candidate"] = {"tag": tag, "digest": digest}
     path.write_text(lib.dump_like(doc, raw))
     return CATALOGUE
 
 
-def cuda_row_tag(root: Path) -> str | None:
-    path = root / CATALOGUE
-    if not path.is_file():
-        return None
-    rows = [e for e in json.loads(path.read_text()).get("runners", []) if e.get("id") == CUDA_ID or e.get("key") == CUDA_ID]
-    return rows[0].get("tag") if len(rows) == 1 else None
-
-
-def run(root: Path, api: Api, apply: bool, cuda_tags: Callable[[], list[str]] | None = None) -> Bump | None:
+def run(
+    root: Path, api: Api, apply: bool,
+    cuda_tags: Callable[[], list[str]] | None = None,
+    cuda_digest: Callable[[str], str] | None = None,
+) -> Bump | None:
     pin = read_pin(root)
     rel = latest_release(api)
     if not rel:
@@ -202,51 +196,54 @@ def run(root: Path, api: Api, apply: bool, cuda_tags: Callable[[], list[str]] | 
     moves = is_newer(rel["tag_name"], pin["release"])
     release = rel["tag_name"] if moves else pin["release"]
 
-    cuda_now = cuda_row_tag(root)
-    cuda_new = None
-    if cuda_now is not None:
+    cuda_prev = cuda_new = None
+    path = root / CATALOGUE
+    row = cuda_row(json.loads(path.read_text())) if path.is_file() else None
+    if row is not None:
+        cuda_prev = cuda_reference(row)
         best = newest_cuda_tag((cuda_tags or (lambda: lib.ghcr_tags(CUDA_IMAGE)))(), release)
-        if best and is_newer(best, cuda_now):
+        if best and (cuda_prev is None or is_newer(best, cuda_prev)):
             cuda_new = best
     if not moves and not cuda_new:
         return None
 
+    commit = subject = None
+    if moves:
+        commit, subject = resolve_commit(release, api)
     bump = Bump(
-        release=release, previous=pin["release"],
-        tag=release if moves else None,
-        commit=resolve_commit(release, api) if moves else None,
+        release=release, previous=pin["release"], tag=release if moves else None, commit=commit,
         url=rel["html_url"] if moves else None,
         compare_url=f"https://github.com/{UPSTREAM}/compare/{pin['release']}...{release}" if moves else None,
-        cuda_previous=cuda_now, cuda_tag=cuda_new,
+        cuda_previous=cuda_prev, cuda_tag=cuda_new,
     )
+    if cuda_new:
+        bump.cuda_digest = (cuda_digest or (lambda t: lib.ghcr_digest(CUDA_IMAGE, t)))(cuda_new)
     cuda_suffix = f"cuda-{cuda_new.removeprefix('server-cuda-')}" if cuda_new else ""
     bump.branch = "-".join(x for x in (f"bot/bump-llama-cpp-{release}" if moves else "bot/bump-llama-cpp", cuda_suffix) if x)
-    what = [f"llama.cpp to {release}"] if moves else []
-    if cuda_new:
-        what.append(f"cuda to {cuda_new}")
+    what = ([f"llama.cpp to {release}"] if moves else []) + ([f"cuda to {cuda_new}"] if cuda_new else [])
     bump.title = "chore(runners): bump " + " and ".join(what)
     if apply:
         if moves:
-            bump.files += apply_bump(root, pin["release"], release, bump.commit)  # type: ignore[arg-type]
+            bump.files.append(apply_pin(root, release, commit, subject or ""))  # type: ignore[arg-type]
         if cuda_new:
-            bump.files.append(apply_cuda(root, cuda_new))
+            bump.files.append(apply_cuda(root, cuda_new, bump.cuda_digest))  # type: ignore[arg-type]
     return bump
 
 
 def pr_body(b: Bump) -> str:
     out: list[str] = []
     if b.tag:
-        out += [f"Moves the llama.cpp release pin of `standard` and `cpu` from `{b.previous}` to "
+        out += [f"Moves the shared llama.cpp pin (`runners/llama.cpp.toml`: `standard`, `cpu`) from `{b.previous}` to "
                 f"[`{b.tag}`]({b.url}) (`{b.commit[:12]}`).", "",  # type: ignore[index]
                 f"Upstream changes: {b.compare_url}", ""]
     if b.cuda_tag:
-        out += [f"Moves the external `cuda` row of `images.json` from `{b.cuda_previous}` to `{b.cuda_tag}`, "
+        out += [f"Sets the `cuda` row's candidate in `images.json` to `{b.cuda_tag}` (`{b.cuda_digest}`), "
                 f"the newest `server-cuda-b<M>` ggml-org has published with M at or below the pinned release "
-                f"(`{b.release}`). Its digest is cleared until that tag is gated.", ""]
+                f"(`{b.release}`); it was `{b.cuda_previous}`. ggml-org skips releases, so it can lag the pin.", ""]
     out += ["Files changed: " + ", ".join(f"`{f}`" for f in b.files) + ".", ""]
     if b.tag:
         out += ["Not changed here, for a person to do in this PR:", "",
-                "- [ ] the comments in `runners/standard/manifest.toml` that describe the old release",
+                "- [ ] the `#:` notes above `version` in `runners/llama.cpp.toml`, which describe the old release",
                 "- [ ] `[verification]` probes that should change for this release (read the upstream diff)", "",
                 "## Before merging", "",
                 "- [ ] Read the upstream diff for changes to flags, defaults, API or chat templating",
@@ -260,7 +257,7 @@ def pr_body(b: Bump) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--apply", action="store_true", help="rewrite the pin file and its mirrors")
+    ap.add_argument("--apply", action="store_true", help="rewrite the pin file and the cuda candidate")
     ap.add_argument("--json-file", default="")
     ap.add_argument("--body-file", default="", help="write the bump PR description here")
     args = ap.parse_args(argv)
