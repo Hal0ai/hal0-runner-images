@@ -1,0 +1,165 @@
+name: Promote runner image
+
+# Moves GATED digests into the two places that consume pins (docs/UPDATING.md,
+# step 5). Run it by hand after the hardware gate passes:
+#
+#   promotions    what to pin, comma separated:
+#                   standard=sha256:<digest>          a runner built here
+#                   cuda=<tag>@sha256:<digest>        an external runner (no recipe here)
+#                 A llama.cpp bump is ONE run for the group:
+#                   standard=sha256:..,cpu=sha256:..,cuda=server-cuda-b11541@sha256:..
+#                 (ggml-org skips releases: cuda takes the newest server-cuda-b<M>, M <= N)
+#   gate_reports  one https URL covering every runner, or key=URL for each
+#                 (JSON, schema hal0.gate-report.v1; a group document is fine).
+#                 An external runner (cuda) has no hardware gate and may be left out.
+#
+# It verifies every item, then opens TWO pull requests and merges neither:
+#   1. this repo:  images.json  each runner's tag + digest (candidate cleared),
+#                  gate_report and lanes_gated (from the gate report)
+#   2. Hal0ai/hal0: those runners' rows in the pin table of manifest.json (and
+#                  only that file)
+# If any item fails verification nothing is opened. standard and cpu must name
+# one llama.cpp release, and cuda may not be ahead of it.
+#
+# Verification (ci/promote.py verify): the digest exists in
+# ghcr.io/hal0ai/hal0-runner-<runner>; its signed provenance says it was built by
+# .github/workflows/build.yml on refs/heads/main of this repository; its
+# immutable tag still points at that digest; and a gate report names the same
+# digest and passed. An external runner (cuda) is checked against the registry
+# only: no provenance.
+#
+# SECRETS
+#   HAL0_MANIFEST_PR_TOKEN   (already exists, used by the old pin-digests
+#                             workflow) fine-grained PAT with Contents + Pull
+#                             requests: write on Hal0ai/hal0. Required.
+#   RUNNER_IMAGES_PR_TOKEN   optional PAT with Contents + Pull requests: write on
+#                             this repo, so the images.json PR gets CI. Falls
+#                             back to the default token (then that PR gets no
+#                             CI run until closed and reopened).
+
+on:
+  workflow_dispatch:
+    inputs:
+      promotions:
+        description: "key=sha256:<digest>, comma separated; external runners as key=<tag>@sha256:<digest>"
+        type: string
+        required: true
+      gate_reports:
+        description: "https URL of one gate report covering all runners, or key=URL for each"
+        type: string
+        required: true
+      create_missing_hal0_row:
+        description: "Add a runner's row to hal0's pin table if it has none (normally hal0 adds rows first)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: promote
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+      packages: read
+      attestations: read
+    env:
+      PROMOTIONS: ${{ inputs.promotions }}
+      GATE_REPORTS: ${{ inputs.gate_reports }}
+      THIS_TOKEN: ${{ secrets.RUNNER_IMAGES_PR_TOKEN || github.token }}
+      HAL0_TOKEN: ${{ secrets.HAL0_MANIFEST_PR_TOKEN }}
+    steps:
+      - name: Require the cross-repo token before doing anything
+        run: |
+          if [[ -z "$HAL0_TOKEN" ]]; then
+            echo "::error::secret HAL0_MANIFEST_PR_TOKEN is not set; promote would update only half of the pins."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v6
+        with:
+          token: ${{ secrets.RUNNER_IMAGES_PR_TOKEN || github.token }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify every digest and gate report
+        id: verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 ci/promote.py verify --promotions "$PROMOTIONS" \
+            --gate-reports "$GATE_REPORTS" --token "$GH_TOKEN" --out "$RUNNER_TEMP/result.json"
+          python3 ci/promote.py pr-body --result "$RUNNER_TEMP/result.json" > "$RUNNER_TEMP/pr.md"
+
+      - name: Open the images.json pull request (this repository)
+        env:
+          GH_TOKEN: ${{ env.THIS_TOKEN }}
+          BRANCH: ${{ steps.verify.outputs.branch }}
+          TITLE: ${{ steps.verify.outputs.title }}
+        run: |
+          set -euo pipefail
+          python3 ci/promote.py catalogue --result "$RUNNER_TEMP/result.json"
+          if git diff --quiet; then echo "images.json already has these pins; nothing to do"; exit 0; fi
+          changed="$(git diff --name-only)"
+          [[ "$changed" == "images.json" ]] || { echo "::error::unexpected files changed: $changed"; exit 1; }
+          git config user.name  "hal0-runner-images-bot"
+          git config user.email "bot@hal0.local"
+          git checkout -b "$BRANCH"
+          git add images.json
+          git commit -s -m "$TITLE"
+          git push --force origin "$BRANCH"
+          if gh pr view "$BRANCH" --json state --jq '.state' 2>/dev/null | grep -qx OPEN; then
+            gh pr edit "$BRANCH" --title "$TITLE" --body-file "$RUNNER_TEMP/pr.md"
+          else
+            gh pr create --base main --head "$BRANCH" --title "$TITLE" --body-file "$RUNNER_TEMP/pr.md"
+          fi
+
+      - name: Check out Hal0ai/hal0
+        uses: actions/checkout@v6
+        with:
+          repository: Hal0ai/hal0
+          path: app
+          token: ${{ secrets.HAL0_MANIFEST_PR_TOKEN }}
+
+      - name: Open the pin pull request (Hal0ai/hal0)
+        working-directory: app
+        env:
+          GH_TOKEN: ${{ env.HAL0_TOKEN }}
+          BRANCH: ${{ steps.verify.outputs.branch }}
+          TITLE: ${{ steps.verify.outputs.title }}
+          CREATE_MISSING: ${{ inputs.create_missing_hal0_row }}
+        run: |
+          set -euo pipefail
+          extra=()
+          if [[ "$CREATE_MISSING" == "true" ]]; then extra=(--create-missing); fi
+          python3 ../ci/promote.py hal0-pin --result "$RUNNER_TEMP/result.json" --hal0-dir . "${extra[@]}"
+          if git diff --quiet; then echo "hal0 already has these pins; nothing to do"; exit 0; fi
+          # The hal0 PR may touch the pin file and nothing else.
+          pin_file="$(python3 -c 'import sys; sys.path.insert(0, "../ci"); import hal0_pins; print(hal0_pins.HAL0_PIN_FILE)')"
+          changed="$(git diff --name-only)"
+          [[ "$changed" == "$pin_file" ]] || { echo "::error::unexpected files changed in hal0: $changed"; exit 1; }
+          git config user.name  "hal0-runner-images-bot"
+          git config user.email "bot@hal0.local"
+          git checkout -b "$BRANCH"
+          git add "$pin_file"
+          git commit -s -m "$TITLE"
+          git push --force origin "$BRANCH"
+          if gh pr view "$BRANCH" --json state --jq '.state' 2>/dev/null | grep -qx OPEN; then
+            gh pr edit "$BRANCH" --title "$TITLE" --body-file "$RUNNER_TEMP/pr.md"
+          else
+            gh pr create --repo Hal0ai/hal0 --base main --head "$BRANCH" --title "$TITLE" --body-file "$RUNNER_TEMP/pr.md"
+          fi

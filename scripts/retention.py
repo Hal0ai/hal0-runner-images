@@ -12,8 +12,8 @@ keep, no exceptions).
 
 hal0's own image pins arrive from TWO sources, unioned: the local
 `hal0_code_pins` floor in retention-allowlist.json, plus a machine-readable
-export fetched at run start from Hal0ai/hal0 (HAL0_PINS_EXPORT_URL, generated
-from src/hal0/config/schema.py). The union only ever widens protection, and
+pin table fetched at run start from Hal0ai/hal0 (HAL0_PINS_EXPORT_URL: the runner
+table in its manifest.json; field names are mapped in ci/hal0_pins.py). The union only ever widens protection, and
 any fetch/parse failure — 404 included — aborts the run before anything is
 planned, for dry-run and --delete alike.
 
@@ -83,15 +83,16 @@ DEFAULT_ORG = "hal0ai"
 DEFAULT_KEEP_RELEASES = 4
 DEFAULT_GRACE_DAYS = 14
 
-# Machine-readable export of hal0's runner-image pins (DEFAULT_ROCMFPX_IMAGE /
-# VULKAN_CAPABLE_IMAGE_REFS from src/hal0/config/schema.py). Fetched at run
+# hal0's runner pin table (manifest.json on Hal0ai/hal0 main; the field names
+# are mapped in ci/hal0_pins.py, shared with promote.py). Fetched at run
 # start and UNIONED with the local hal0_code_pins in retention-allowlist.json —
 # the merge only ever WIDENS protection, never narrows it, and any
 # fetch/parse failure (404 included) aborts the whole run before anything is
 # planned, dry-run and --delete alike.
-HAL0_PINS_EXPORT_URL = (
-    "https://raw.githubusercontent.com/Hal0ai/hal0/main/exports/runner-image-pins.json"
-)
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ci"))
+import hal0_pins  # noqa: E402
+
+HAL0_PINS_EXPORT_URL = hal0_pins.HAL0_PIN_URL
 
 
 # ---------------------------------------------------------------------------
@@ -227,40 +228,18 @@ def build_allowlist_index(allowlist_doc: dict) -> dict:
 
 
 def parse_hal0_pins_export(raw: str, url: str) -> list:
-    """Parse the hal0 runner-image pins export into a list of image refs.
+    """Parse hal0's manifest.json runner pin table into a list of image refs.
 
-    Expected shape (produced by Hal0ai/hal0's exports/runner-image-pins.json):
-        {"source": "src/hal0/config/schema.py", "pins": ["<image refs>"]}
-
-    Pure — no I/O — so the fixture tests exercise it directly. Fails LOUD
-    (SystemExit) on anything unexpected, including an EMPTY pins list: hal0
-    always pins at least one runner image, so zero pins means the export is
-    broken, and running with a silently-missing pin list is exactly the
-    failure mode this fetch exists to prevent. Each returned ref is further
-    validated by parse_allowlist_ref() when the merged set is indexed.
+    Each row yields `image:tag` and `image@digest` (ci/hal0_pins.py owns the
+    field mapping). Pure, no I/O, so the fixture tests exercise it directly.
+    Fails LOUD (SystemExit) on anything unexpected, including a missing table
+    or ZERO pins: hal0 always pins at least one runner image, so an empty list
+    means the file or the mapping is broken, and running with a silently
+    missing pin list is exactly the failure mode this fetch exists to prevent.
+    Each returned ref is further validated by parse_allowlist_ref() when the
+    merged set is indexed.
     """
-    try:
-        doc = json.loads(raw)
-    except ValueError as e:
-        raise SystemExit(f"FATAL: hal0 pins export at {url} is not valid JSON: {e}")
-    if not isinstance(doc, dict) or not isinstance(doc.get("pins"), list):
-        raise SystemExit(
-            f"FATAL: hal0 pins export at {url} has an unexpected shape "
-            '(expected {"source": "...", "pins": ["<image refs>"]})'
-        )
-    pins = doc["pins"]
-    bad = [p for p in pins if not isinstance(p, str) or not p.strip()]
-    if bad:
-        raise SystemExit(
-            f"FATAL: hal0 pins export at {url}: non-string/empty entries in \"pins\": {bad!r}"
-        )
-    if not pins:
-        raise SystemExit(
-            f"FATAL: hal0 pins export at {url} lists ZERO pins — hal0 always pins "
-            "at least one runner image, so an empty export means it is broken. "
-            "Refusing to run against a suspect pin list."
-        )
-    return pins
+    return hal0_pins.parse_pin_table(raw, url)
 
 
 def fetch_hal0_pins_export(url: str) -> list:
@@ -733,7 +712,7 @@ def main(argv: list | None = None) -> int:
     # fetch/parse failure is a SystemExit inside fetch_hal0_pins_export, so
     # a broken/missing export means no plan and no deletions, full stop.
     local_pins = list(allowlist_doc.get("hal0_code_pins", []))
-    print(f"Fetching hal0 code pins export from {args.pins_url}...", file=sys.stderr)
+    print(f"Fetching hal0 runner pin table from {args.pins_url}...", file=sys.stderr)
     fetched_pins = fetch_hal0_pins_export(args.pins_url)
     print(
         f"Fetched {len(fetched_pins)} pin(s); local hal0_code_pins floor has {len(local_pins)}.",
