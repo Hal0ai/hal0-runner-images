@@ -17,6 +17,10 @@
 #: more than 115 GB of free unified memory to load.
 boxes = ["the Strix Halo box (kfd present)"]
 
+#: Every llama-server session passes --host 0.0.0.0, as hal0 does: llama-server
+#: binds 127.0.0.1 by default, which inside the container is unreachable
+#: through the published port. It is a session argument, not a lane
+#: server_arg, because server_args also reach llama-perplexity.
 [lanes.rocm]
 devices = ["/dev/kfd", "/dev/dri"]
 server_args = ["-dev", "ROCm0", "-ngl", "999"]
@@ -58,7 +62,7 @@ expect = ["translating to exit 64"]
 [[session]]
 name = "qwen-mtp"
 doc = "Qwen3.8-27B UD-Q4_K_XL + mmproj-F16 with MTP at hal0's defaults"
-args = ["-m", "{path:qwen3.8-27b}", "--mmproj", "{path:qwen3.8-27b-mmproj}", "-c", "98304",
+args = ["--host", "0.0.0.0", "-m", "{path:qwen3.8-27b}", "--mmproj", "{path:qwen3.8-27b-mmproj}", "-c", "98304",
         "--spec-type", "draft-mtp", "-b", "2048", "-ub", "512", "--jinja"]
 port = 8080
 mem_extra_gib = 10
@@ -114,7 +118,7 @@ mem_extra_gib = 10
 [[session]]
 name = "qwen-no-mtp"
 doc = "the same model without MTP, for the comparison"
-args = ["-m", "{path:qwen3.8-27b}", "--mmproj", "{path:qwen3.8-27b-mmproj}", "-c", "98304",
+args = ["--host", "0.0.0.0", "-m", "{path:qwen3.8-27b}", "--mmproj", "{path:qwen3.8-27b-mmproj}", "-c", "98304",
         "-b", "2048", "-ub", "512", "--jinja"]
 port = 8080
 mem_extra_gib = 10
@@ -128,7 +132,7 @@ mem_extra_gib = 10
 [[session]]
 name = "qwen-np4"
 doc = "four server slots"
-args = ["-m", "{path:qwen3.8-27b}", "-c", "32768", "-np", "4", "--jinja"]
+args = ["--host", "0.0.0.0", "-m", "{path:qwen3.8-27b}", "-c", "32768", "-np", "4", "--jinja"]
 port = 8080
 mem_extra_gib = 6
 
@@ -141,7 +145,7 @@ mem_extra_gib = 6
 [[session]]
 name = "qwen-reasoning-none"
 doc = "--reasoning-format none (failed with 'Failed to initialize samplers' at b11510; hal0 #2545)"
-args = ["-m", "{path:qwen3.8-27b}", "-c", "16384", "--jinja", "--reasoning-format", "none"]
+args = ["--host", "0.0.0.0", "-m", "{path:qwen3.8-27b}", "-c", "16384", "--jinja", "--reasoning-format", "none"]
 port = 8080
 mem_extra_gib = 4
 informational = true
@@ -154,7 +158,7 @@ informational = true
 [[session]]
 name = "lfm"
 doc = "LFM2.5-2.6B Q8_0"
-args = ["-m", "{path:lfm2.5-2.6b}", "-c", "16384", "--jinja"]
+args = ["--host", "0.0.0.0", "-m", "{path:lfm2.5-2.6b}", "-c", "16384", "--jinja"]
 port = 8080
 mem_extra_gib = 3
 
@@ -166,7 +170,7 @@ mem_extra_gib = 3
 [[session]]
 name = "brain-sft"
 doc = "hal0-brain-sft (minicpm5, plain GGUF)"
-args = ["-m", "{path:hal0-brain-sft}", "-c", "16384", "--jinja"]
+args = ["--host", "0.0.0.0", "-m", "{path:hal0-brain-sft}", "-c", "16384", "--jinja"]
 port = 8080
 mem_extra_gib = 3
 

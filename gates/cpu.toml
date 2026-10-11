@@ -10,6 +10,10 @@
 #: operator's gate-models.toml.
 boxes = ["any x86_64 box with no GPU passed through", "the Strix Halo box"]
 
+#: Every llama-server session passes --host 0.0.0.0, as hal0 does: llama-server
+#: binds 127.0.0.1 by default, which inside the container is unreachable
+#: through the published port. It is a session argument, not a lane
+#: server_arg, because server_args also reach llama-perplexity.
 [lanes.cpu]
 server_args = ["-ngl", "0"]
 
@@ -37,7 +41,7 @@ kind = "elsewhere"
 [[session]]
 name = "lfm"
 doc = "a small GGUF on the CPU, with the --port hal0 renders (llama-server's own default is 9931 since #30159)"
-args = ["-m", "{path:lfm2.5-2.6b}", "-c", "4096", "--port", "8080"]
+args = ["--host", "0.0.0.0", "-m", "{path:lfm2.5-2.6b}", "-c", "4096", "--port", "8080"]
 port = 8080
 mem_extra_gib = 2
 
