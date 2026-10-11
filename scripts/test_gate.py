@@ -651,7 +651,8 @@ class GateRunTests(unittest.TestCase):
             toml = Path(d) / "gate-models.toml"
             toml.write_text(f'[models]\n"lfm2.5-2.6b" = "{self.models.entries["lfm2.5-2.6b"]["path"]}"\n')
             out = Path(d) / "r.json"
-            rc = gate.main(["cpu", "--digest", D1, "--models", str(toml), "--out", str(out)], host=host)
+            rc = gate.main(["cpu", "--digest", D1, "--models", str(toml), "--out", str(out)], host=host,
+                           tree_check=lambda: [])
             text = out.read_text()
         self.assertEqual(rc, 0)
         self.assertNotIn(self.tmp.name, text)
@@ -660,6 +661,44 @@ class GateRunTests(unittest.TestCase):
         self.assertEqual(promote.parse_gate_reports("https://github.com/x/y/releases/download/t/r.json", ["cpu"]),
                          {"cpu": "https://github.com/x/y/releases/download/t/r.json"})
 
+
+    def test_cli_refuses_a_dirty_tree_before_touching_the_host(self):
+        host = self.cpu_host()
+        locked = []
+        host.lock = lambda: locked.append(True)
+        with tempfile.TemporaryDirectory() as d:
+            toml = Path(d) / "gate-models.toml"
+            toml.write_text(f'[models]\n"lfm2.5-2.6b" = "{self.models.entries["lfm2.5-2.6b"]["path"]}"\n')
+            out = Path(d) / "r.json"
+            with self.assertRaises(gate.GateError) as cm:
+                gate.main(["cpu", "--digest", D1, "--models", str(toml), "--out", str(out)], host=host,
+                          tree_check=lambda: [" M gates/cpu.toml", "?? scripts/extra.py"])
+            self.assertFalse(out.exists())
+            # --plan runs nothing, so it is allowed on a dirty tree
+            rc = gate.main(["cpu", "--plan", "--models", str(toml)], host=host,
+                           tree_check=lambda: [" M gates/cpu.toml"])
+        self.assertIn("gates/cpu.toml", cm.exception.msg)
+        self.assertIn("scripts/extra.py", cm.exception.msg)
+        self.assertEqual((locked, host.calls), ([], []))
+        self.assertEqual(rc, 0)
+
+    def test_tree_problems_lists_changes_under_the_guarded_paths(self):
+        seen = []
+
+        def run(argv, **kw):
+            seen.append(argv)
+            return subprocess.CompletedProcess(argv, 0, " M gates/standard.toml\n?? ci/new.py\n", "")
+        self.assertEqual(gate.tree_problems(run), [" M gates/standard.toml", "?? ci/new.py"])
+        self.assertEqual(seen[0][:4], ["git", "status", "--porcelain", "--untracked-files=all"])
+        self.assertEqual(seen[0][-3:], ["gates", "scripts", "ci"])
+        clean = lambda argv, **kw: subprocess.CompletedProcess(argv, 0, "", "")
+        self.assertEqual(gate.tree_problems(clean), [])
+        broken = lambda argv, **kw: subprocess.CompletedProcess(argv, 128, "", "fatal: not a git repository")
+        self.assertIn("not a git repository", gate.tree_problems(broken)[0])
+
+        def missing(argv, **kw):
+            raise FileNotFoundError("git")
+        self.assertIn("git is not available", gate.tree_problems(missing)[0])
 
 class CheckTests(unittest.TestCase):
     """Session checks against canned server responses."""

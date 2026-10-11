@@ -1976,6 +1976,26 @@ def utc_now() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
 
 
+#: The files a report's gate.revision vouches for: the probes, this script and
+#: promote's validator. A change to any of them that is not committed would
+#: make the report claim a revision whose probes it did not run.
+GUARDED_PATHS = ("gates", "scripts", "ci")
+
+
+def tree_problems(run: Callable = subprocess.run) -> list[str]:
+    """Why this checkout cannot vouch for gate.revision: every changed, staged or
+    untracked file under GUARDED_PATHS (ignored files such as __pycache__ do
+    not count), or why git could not tell. Empty when the tree is clean."""
+    try:
+        cp = run(["git", "status", "--porcelain", "--untracked-files=all", "--", *GUARDED_PATHS],
+                 cwd=ROOT, capture_output=True, text=True)
+    except OSError as e:
+        return [f"git is not available: {e}"]
+    if cp.returncode != 0:
+        return [f"git status failed (not a checkout of this repository?): {clip(cp.stderr or cp.stdout)}"]
+    return [line.rstrip() for line in cp.stdout.splitlines() if line.strip()]
+
+
 def git_revision() -> str:
     try:
         cp = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True)
@@ -1984,7 +2004,8 @@ def git_revision() -> str:
     return cp.stdout.strip() if cp.returncode == 0 else ""
 
 
-def main(argv: list[str] | None = None, host: Host | None = None) -> int:
+def main(argv: list[str] | None = None, host: Host | None = None,
+         tree_check: Callable[[], list[str]] = tree_problems) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("key", nargs="?", help="runner key (runners/<key>)")
     ap.add_argument("--group", help="gate every runner of a shared pin, e.g. llama.cpp (standard + cpu)")
@@ -2020,6 +2041,14 @@ def main(argv: list[str] | None = None, host: Host | None = None) -> int:
             Gate(k, digests.get(k, "sha256:<digest>"), tags.get(k), models, host or Host(args.podman, False),
                  args.headroom_gib, plan_only=True).run()
         return 0
+
+    problems = tree_check()
+    if problems:
+        shown = "\n  ".join(problems[:20]) + ("\n  ..." if len(problems) > 20 else "")
+        raise GateError("refusing to run: the report records the commit of this checkout as "
+                        "gate.revision, but these files under " + ", ".join(f"{p}/" for p in GUARDED_PATHS)
+                        + f" differ from it:\n  {shown}\n"
+                        "commit or discard them first (--plan runs on a dirty tree)")
 
     host = host or Host(args.podman)
 
