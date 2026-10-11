@@ -7,7 +7,8 @@ name: Promote runner image
 #                   standard=sha256:<digest>          a runner built here
 #                   cuda=<tag>@sha256:<digest>        an external runner (no recipe here)
 #                 A llama.cpp bump is ONE run for the group:
-#                   standard=sha256:..,cpu=sha256:..,cuda=server-cuda-b11552@sha256:..
+#                   standard=sha256:..,cpu=sha256:..,cuda=server-cuda-b11541@sha256:..
+#                 (ggml-org skips releases: cuda takes the newest server-cuda-b<M>, M <= N)
 #   gate_reports  one https URL covering every runner, or key=URL for each
 #                 (JSON, schema hal0.gate-report.v1; a group document is fine)
 #
@@ -16,8 +17,8 @@ name: Promote runner image
 #                  gate_report and lanes_gated (from the gate report)
 #   2. Hal0ai/hal0: those runners' rows in the pin table of manifest.json (and
 #                  only that file)
-# If any item fails verification nothing is opened. A group that mixes llama.cpp
-# releases is refused.
+# If any item fails verification nothing is opened. standard and cpu must name
+# one llama.cpp release, and cuda may not be ahead of it.
 #
 # Verification (ci/promote.py verify): the digest exists in
 # ghcr.io/hal0ai/hal0-runner-<runner>; its signed provenance says it was built by

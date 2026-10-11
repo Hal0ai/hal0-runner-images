@@ -13,9 +13,13 @@ both together, so one PR bumps them as one:
   [source].ref      the commit the tag points at (full SHA)
   [verification]    a probe sentence "release <old>" becomes "release <new>"
 
-Comments, patches, probes that merely mention the old release (a record of what
-failed at b11510, say) and the cuda row of images.json are NOT touched: the PR
-body lists them for a person. The other runners are report-only; that is
+The external `cuda` row of images.json follows too: ggml-org does not publish
+server-cuda for every release, so it takes the newest `server-cuda-b<M>` tag
+with M <= the pinned release (GHCR tag list), and its digest is cleared until
+that tag is gated. When only cuda has a newer tag, the PR moves only that row.
+
+Comments, patches and probes that merely mention the old release (a record of
+what failed at b11510, say) are NOT touched: the PR body lists them for a person. The other runners are report-only; that is
 scripts/source_watch.py, which the workflow runs next to this.
 
 It builds nothing, pushes nothing and calls only the public GitHub API.
@@ -46,6 +50,10 @@ AUTO_BUMP = ("standard", "cpu")          # runners that share one llama.cpp rele
 LEAD = "standard"                        # the runner whose manifest says what is pinned now
 UPSTREAM = "ggml-org/llama.cpp"
 TAG_RE = r"^b\d+$"
+CUDA_ID = "cuda"                          # the images.json row
+CUDA_IMAGE = "ghcr.io/ggml-org/llama.cpp"
+CUDA_TAG_RE = re.compile(r"^server-cuda-b(\d+)$")
+CATALOGUE = "images.json"
 # manifest table -> key -> what to write ("release" tag or "commit" sha)
 MANIFEST_KEYS = {
     "image": {"version": "release"},
@@ -59,11 +67,16 @@ Api = Callable[[str], object]
 
 @dataclass
 class Bump:
-    previous: str
-    tag: str
-    commit: str
-    url: str
-    compare_url: str
+    release: str                # the pinned release after this change
+    previous: str               # the pinned release before it
+    tag: str | None             # new release when standard/cpu move, else None
+    commit: str | None
+    url: str | None
+    compare_url: str | None
+    cuda_previous: str | None
+    cuda_tag: str | None        # new cuda tag when that row moves, else None
+    branch: str = ""
+    title: str = ""
     files: list[str] = field(default_factory=list)
 
 
@@ -153,33 +166,111 @@ def apply_bump(root: Path, old_release: str, new_tag: str, new_commit: str) -> l
     return touched
 
 
-def run(root: Path, api: Api, apply: bool) -> Bump | None:
+def newest_cuda_tag(tags: list[str], release: str) -> str | None:
+    """The newest server-cuda-b<M> with M <= the pinned release number."""
+    limit = version_key(release)[0]  # type: ignore[index]
+    found = [(int(m.group(1)), t) for t in tags if (m := CUDA_TAG_RE.match(t)) and int(m.group(1)) <= limit]
+    return max(found)[1] if found else None
+
+
+def apply_cuda(root: Path, new_tag: str) -> str:
+    path = root / CATALOGUE
+    raw = path.read_text()
+    doc = json.loads(raw)
+    rows = [e for e in doc.get("runners", []) if e.get("id") == CUDA_ID or e.get("key") == CUDA_ID]
+    if len(rows) != 1:
+        raise lib.CIError(f"{CATALOGUE}: expected one {CUDA_ID!r} row, found {len(rows)}")
+    rows[0]["tag"] = new_tag
+    rows[0]["digest"] = None  # the old digest belonged to the old tag; promote re-pins it
+    path.write_text(lib.dump_like(doc, raw))
+    return CATALOGUE
+
+
+def cuda_row_tag(root: Path) -> str | None:
+    path = root / CATALOGUE
+    if not path.is_file():
+        return None
+    rows = [e for e in json.loads(path.read_text()).get("runners", []) if e.get("id") == CUDA_ID or e.get("key") == CUDA_ID]
+    return rows[0].get("tag") if len(rows) == 1 else None
+
+
+def run(root: Path, api: Api, apply: bool, cuda_tags: Callable[[], list[str]] | None = None) -> Bump | None:
     pin = read_pin(root)
     rel = latest_release(api)
     if not rel:
         raise lib.CIError(f"no {TAG_RE} release found for {UPSTREAM}")
-    if not is_newer(rel["tag_name"], pin["release"]):
+    moves = is_newer(rel["tag_name"], pin["release"])
+    release = rel["tag_name"] if moves else pin["release"]
+
+    cuda_now = cuda_row_tag(root)
+    cuda_new = None
+    if cuda_now is not None:
+        best = newest_cuda_tag((cuda_tags or (lambda: lib.ghcr_tags(CUDA_IMAGE)))(), release)
+        if best and is_newer(best, cuda_now):
+            cuda_new = best
+    if not moves and not cuda_new:
         return None
-    tag = rel["tag_name"]
+
     bump = Bump(
-        previous=pin["release"], tag=tag, commit=resolve_commit(tag, api), url=rel["html_url"],
-        compare_url=f"https://github.com/{UPSTREAM}/compare/{pin['release']}...{tag}",
+        release=release, previous=pin["release"],
+        tag=release if moves else None,
+        commit=resolve_commit(release, api) if moves else None,
+        url=rel["html_url"] if moves else None,
+        compare_url=f"https://github.com/{UPSTREAM}/compare/{pin['release']}...{release}" if moves else None,
+        cuda_previous=cuda_now, cuda_tag=cuda_new,
     )
+    cuda_suffix = f"cuda-{cuda_new.removeprefix('server-cuda-')}" if cuda_new else ""
+    bump.branch = "-".join(x for x in (f"bot/bump-llama-cpp-{release}" if moves else "bot/bump-llama-cpp", cuda_suffix) if x)
+    what = [f"llama.cpp to {release}"] if moves else []
+    if cuda_new:
+        what.append(f"cuda to {cuda_new}")
+    bump.title = "chore(runners): bump " + " and ".join(what)
     if apply:
-        bump.files = apply_bump(root, pin["release"], tag, bump.commit)
+        if moves:
+            bump.files += apply_bump(root, pin["release"], release, bump.commit)  # type: ignore[arg-type]
+        if cuda_new:
+            bump.files.append(apply_cuda(root, cuda_new))
     return bump
+
+
+def pr_body(b: Bump) -> str:
+    out: list[str] = []
+    if b.tag:
+        out += [f"Moves the llama.cpp release pin of `standard` and `cpu` from `{b.previous}` to "
+                f"[`{b.tag}`]({b.url}) (`{b.commit[:12]}`).", "",  # type: ignore[index]
+                f"Upstream changes: {b.compare_url}", ""]
+    if b.cuda_tag:
+        out += [f"Moves the external `cuda` row of `images.json` from `{b.cuda_previous}` to `{b.cuda_tag}`, "
+                f"the newest `server-cuda-b<M>` ggml-org has published with M at or below the pinned release "
+                f"(`{b.release}`). Its digest is cleared until that tag is gated.", ""]
+    out += ["Files changed: " + ", ".join(f"`{f}`" for f in b.files) + ".", ""]
+    if b.tag:
+        out += ["Not changed here, for a person to do in this PR:", "",
+                "- [ ] the comments in `runners/standard/manifest.toml` that describe the old release",
+                "- [ ] `[verification]` probes that should change for this release (read the upstream diff)", "",
+                "## Before merging", "",
+                "- [ ] Read the upstream diff for changes to flags, defaults, API or chat templating",
+                "- [ ] `build.yml` is green: it builds the changed images with `push=false`", ""]
+    out += ["## After merging", "",
+            "Merging builds and pushes the immutable tags (if a runner changed) and posts the candidate digests on "
+            "the merge commit. Then run the hardware gate on each digest and promote the llama.cpp group in one "
+            "Promote runner image run (docs/UPDATING.md). Until a promote PR lands, nothing that hal0 pulls changes.", ""]
+    return "\n".join(out)
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--apply", action="store_true", help="rewrite the pin file and its mirrors")
     ap.add_argument("--json-file", default="")
+    ap.add_argument("--body-file", default="", help="write the bump PR description here")
     args = ap.parse_args(argv)
 
     token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
     bump = run(lib.ROOT, lambda p: lib.github_get(p, token), args.apply)
     result = {"bump": asdict(bump) if bump else None}
     print(json.dumps(result, indent=2))
+    if args.body_file and bump:
+        Path(args.body_file).write_text(pr_body(bump))
     if args.json_file:
         Path(args.json_file).write_text(json.dumps(result, indent=2) + "\n")
     return 0

@@ -176,6 +176,48 @@ class ReleaseWatchTests(unittest.TestCase):
                                  ("b11552", "b11552", NEW_SHA))
             self.assertEqual((root / "runners/kokoro/manifest.toml").read_text(), kokoro_before)
 
+    def _cuda_tree(self, root, cuda_tag, version="b11510", ref=OLD_SHA):
+        make_tree(root, {"standard": {"version": version, "ref": ref}, "cpu": {"version": version, "ref": ref}})
+        (root / "images.json").write_text(json.dumps({"schema": "hal0.runner-images.v2", "runners": [
+            {"id": "standard", "tag": None, "digest": None},
+            {"id": "cuda", "image": "ghcr.io/ggml-org/llama.cpp", "tag": cuda_tag, "digest": DIGEST},
+        ]}, indent=2) + "\n")
+
+    def test_newest_cuda_tag_not_ahead_of_the_release(self):
+        tags = ["server-cuda-b11541", "server-cuda-b11515", "server-cuda-b11553", "server-cuda12-b11552",
+                "server-b11552", "full-cuda-b11552", "server-cuda-b9"]
+        self.assertEqual(rw.newest_cuda_tag(tags, "b11552"), "server-cuda-b11541")
+        self.assertEqual(rw.newest_cuda_tag(tags, "b11553"), "server-cuda-b11553")
+        self.assertEqual(rw.newest_cuda_tag(tags, "b11500"), "server-cuda-b9")
+        self.assertIsNone(rw.newest_cuda_tag(["server-b1"], "b11552"))
+
+    def test_bump_moves_the_cuda_row_to_the_newest_tag_that_exists(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            self._cuda_tree(root, "server-cuda-b11515")
+            tags = ["server-cuda-b11515", "server-cuda-b11541", "server-cuda-b11553"]  # b11553 is ahead of b11552
+            bump = rw.run(root, self._api(), apply=True, cuda_tags=lambda: tags)
+            self.assertEqual((bump.tag, bump.cuda_tag), ("b11552", "server-cuda-b11541"))
+            self.assertEqual(bump.title, "chore(runners): bump llama.cpp to b11552 and cuda to server-cuda-b11541")
+            self.assertEqual(bump.branch, "bot/bump-llama-cpp-b11552-cuda-b11541")
+            self.assertIn("images.json", bump.files)
+            row = json.loads((root / "images.json").read_text())["runners"][1]
+            self.assertEqual((row["tag"], row["digest"]), ("server-cuda-b11541", None))
+            self.assertIn("server-cuda-b11541", rw.pr_body(bump))
+
+    def test_cuda_alone_can_move_when_the_pin_is_current(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            self._cuda_tree(root, "server-cuda-b11515", version="b11552", ref=NEW_SHA)
+            before = (root / "runners/standard/manifest.toml").read_text()
+            bump = rw.run(root, self._api(), apply=True, cuda_tags=lambda: ["server-cuda-b11541"])
+            self.assertIsNone(bump.tag)
+            self.assertEqual(bump.branch, "bot/bump-llama-cpp-cuda-b11541")
+            self.assertEqual((root / "runners/standard/manifest.toml").read_text(), before)
+            self.assertEqual(bump.files, ["images.json"])
+            # nothing newer: no bump at all
+            self.assertIsNone(rw.run(root, self._api(), apply=True, cuda_tags=lambda: ["server-cuda-b11541"]))
+
     def test_current_pin_means_no_bump_and_dry_run_writes_nothing(self):
         with tempfile.TemporaryDirectory() as t:
             root = Path(t)
@@ -240,7 +282,7 @@ class PromoteTests(unittest.TestCase):
     def test_dump_like_keeps_the_file_style(self):
         for kwargs in ({"indent": 2, "ensure_ascii": True}, {"indent": 4, "ensure_ascii": False}):
             raw = json.dumps({"a": "é—", "b": [1]}, **kwargs) + "\n"
-            self.assertEqual(promote.dump_like(json.loads(raw), raw), raw)
+            self.assertEqual(lib.dump_like(json.loads(raw), raw), raw)
 
     def test_hal0_pin_edit_updates_one_row_and_keeps_the_rest(self):
         raw = json.dumps({"version": 1, hal0_pins.HAL0_PIN_TABLE: {
@@ -315,19 +357,25 @@ class PromoteTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             promote.report_for({"runners": doc["runners"]}, "cpu")  # no schema
 
-    def test_llama_group_must_name_one_release(self):
+    def test_llama_group_standard_and_cpu_match_and_cuda_may_lag(self):
         def item(k, tag):
             return {"runner": k, "tag": tag, "digest": DIGEST}
-        same = [item("standard", "b11552-r1a2b3c"), item("cpu", "b11552-r2b3c4d"), item("cuda", "server-cuda-b11552")]
-        self.assertEqual(promote.check_group(same), "b11552")
-        branch, title = promote.describe(same)
-        self.assertEqual(title, "chore(runners): pin standard, cpu, cuda to llama.cpp b11552")
+        group = [item("standard", "b11552-r1a2b3c"), item("cpu", "b11552-r2b3c4d"), item("cuda", "server-cuda-b11541")]
+        self.assertEqual(promote.check_group(group), 11552)
+        branch, title = promote.describe(group)
+        self.assertEqual(title, "chore(runners): pin standard, cpu, cuda to llama.cpp b11552 (cuda server-cuda-b11541)")
         self.assertTrue(branch.startswith("bot/promote-cpu-cuda-standard-"))
-        mixed = [item("standard", "b11552-r1a2b3c"), item("cuda", "server-cuda-b11551")]
-        with self.assertRaises(SystemExit):
-            promote.check_group(mixed)
-        with self.assertRaises(SystemExit):
-            promote.check_group([item("cuda", "latest")])
+        self.assertEqual(promote.check_group([item("standard", "b11552-r1a2b3c"), item("cuda", "server-cuda-b11552")]), 11552)
+        for bad in (
+            [item("standard", "b11552-r1a2b3c"), item("cpu", "b11551-r2b3c4d")],        # standard/cpu differ
+            [item("standard", "b11552-r1a2b3c"), item("cuda", "server-cuda-b11553")],   # cuda ahead of the group
+            [item("cuda", "latest")],
+            [item("standard", "latest")],
+        ):
+            with self.assertRaises(SystemExit):
+                promote.check_group(bad)
+        # cuda alone, or beside unrelated runners, has nothing to be ahead of
+        self.assertIsNone(promote.check_group([item("cuda", "server-cuda-b11541")]))
         self.assertEqual(promote.describe([item("kokoro", "1.0-r1234567")]),
                          ("bot/promote-kokoro-1.0-r1234567", "chore(runners): pin kokoro to 1.0-r1234567"))
         self.assertIsNone(promote.check_group([item("kokoro", "1.0-r1234567"), item("flm", "0.9.44-r1234567")]))

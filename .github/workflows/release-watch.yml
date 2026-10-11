@@ -58,10 +58,10 @@ jobs:
           set -euo pipefail
           apply=()
           if [[ "${{ inputs.dry_run }}" != "true" ]]; then apply=(--apply); fi
-          python3 ci/release_watch.py "${apply[@]}" --json-file "$RUNNER_TEMP/result.json"
+          python3 ci/release_watch.py "${apply[@]}" --json-file "$RUNNER_TEMP/result.json" --body-file "$RUNNER_TEMP/pr.md"
           python3 scripts/source_watch.py | tee "$RUNNER_TEMP/report.md"
-          if [[ -n "$(jq -r '.bump.tag // empty' "$RUNNER_TEMP/result.json")" ]]; then
-            echo "A llama.cpp bump to $(jq -r '.bump.tag' "$RUNNER_TEMP/result.json") is being prepared (standard and cpu)." | cat - "$RUNNER_TEMP/report.md" > "$RUNNER_TEMP/report2.md"
+          if [[ -n "$(jq -r '.bump.title // empty' "$RUNNER_TEMP/result.json")" ]]; then
+            echo "Bump prepared: $(jq -r '.bump.title' "$RUNNER_TEMP/result.json")." | cat - "$RUNNER_TEMP/report.md" > "$RUNNER_TEMP/report2.md"
             mv "$RUNNER_TEMP/report2.md" "$RUNNER_TEMP/report.md"
           fi
           cat "$RUNNER_TEMP/report.md" >> "$GITHUB_STEP_SUMMARY"
@@ -87,55 +87,26 @@ jobs:
         if: inputs.dry_run != true
         run: |
           set -euo pipefail
-          tag="$(jq -r '.bump.tag // empty' "$RUNNER_TEMP/result.json")"
-          if [[ -z "$tag" ]]; then echo "nothing to bump"; exit 0; fi
+          branch="$(jq -r '.bump.branch // empty' "$RUNNER_TEMP/result.json")"
+          title="$(jq -r '.bump.title // empty' "$RUNNER_TEMP/result.json")"
+          if [[ -z "$branch" ]]; then echo "nothing to bump"; exit 0; fi
           if [[ -z "${{ secrets.RUNNER_IMAGES_PR_TOKEN }}" ]]; then
             echo "::warning::RUNNER_IMAGES_PR_TOKEN is not set: the bump PR will not get a build.yml run until it is closed and reopened by a person."
           fi
 
-          branch="bot/bump-llama-cpp-${tag}"
-
-          # At most one open bump PR: reuse this tag's, close older ones as superseded.
-          open="$(gh pr list --state open --json number,headRefName --jq '.[] | select(.headRefName | startswith("bot/bump-llama-cpp-")) | "\(.number) \(.headRefName)"')"
+          # At most one open bump PR: keep one for this exact change, close older ones as superseded.
+          open="$(gh pr list --state open --json number,headRefName --jq '.[] | select(.headRefName | startswith("bot/bump-llama-cpp")) | "\(.number) \(.headRefName)"')"
           while read -r num head; do
             [[ -n "$num" ]] || continue
-            if [[ "$head" == "$branch" ]]; then echo "PR #$num already open for ${tag}"; exit 0; fi
-            gh pr close "$num" --delete-branch --comment "Superseded by the bump to ${tag}."
+            if [[ "$head" == "$branch" ]]; then echo "PR #$num already open for this change"; exit 0; fi
+            gh pr close "$num" --delete-branch --comment "Superseded by: ${title}."
           done <<<"$open"
 
           if git diff --quiet; then echo "no file changes after rewrite"; exit 1; fi
           git config user.name  "hal0-runner-images-bot"
           git config user.email "bot@hal0.local"
           git checkout -b "$branch"
-          git add -A runners
-          git commit -s -m "chore(runners): bump llama.cpp to ${tag}"
+          git add -A runners images.json
+          git commit -s -m "$title"
           git push origin "$branch"
-
-          python3 - "$RUNNER_TEMP/result.json" > "$RUNNER_TEMP/pr.md" <<'PY'
-          import json, sys
-          b = json.load(open(sys.argv[1]))["bump"]
-          print(f"Bumps the shared llama.cpp pin to [`{b['tag']}`]({b['url']}) (`{b['commit'][:12]}`).")
-          print()
-          print(f"Was `{b['previous']}`. Files changed: " + ", ".join(f"`{f}`" for f in b["files"]) + ".")
-          print()
-          print(f"Upstream changes: {b['compare_url']}")
-          print()
-          print("`standard` and `cpu` move together. Not changed here, for a person to do in this PR:")
-          print()
-          print("- [ ] the comments in `runners/standard/manifest.toml` that describe the old release")
-          print("- [ ] `[verification]` probes that should change for this release (read the upstream diff)")
-          print("- [ ] the `cuda` row of `images.json`: `server-cuda-b<N>`, once ggml-org has published that image, never ahead of the pin")
-          print()
-          print("## Before merging")
-          print()
-          print("- [ ] Read the upstream diff for changes to flags, defaults, API or chat templating")
-          print("- [ ] `build.yml` is green: it builds the changed images with `push=false`")
-          print()
-          print("## After merging")
-          print()
-          print("Merging builds and pushes the immutable tags and posts the candidate digests on the merge commit. "
-                "Then run the hardware gate on each digest and promote it (docs/UPDATING.md). "
-                "Until a promote PR lands, nothing that hal0 pulls changes.")
-          PY
-          gh pr create --base main --head "$branch" \
-            --title "chore(runners): bump llama.cpp to ${tag}" --body-file "$RUNNER_TEMP/pr.md"
+          gh pr create --base main --head "$branch" --title "$title" --body-file "$RUNNER_TEMP/pr.md"

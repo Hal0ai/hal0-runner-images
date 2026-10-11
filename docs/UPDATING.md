@@ -23,8 +23,13 @@ release, each in its own `manifest.toml`. The watch compares ggml-org's newest
 the `release <old>` sentence in a `[verification]` probe. An older open bump PR
 is closed as superseded.
 
-The PR does not touch comments, patches, other probes or the `cuda` row of
-`images.json`; its checklist lists them for a person. Read the upstream changes
+The `cuda` row of `images.json` follows: the newest `server-cuda-b<M>` tag in
+GHCR with M at or below the pinned release (ggml-org skips releases, and the
+registry's tag list is read in full to find it); its digest is cleared until that
+tag is gated. When only `cuda` has a newer tag, the PR moves only that row.
+
+The PR does not touch comments, patches or other probes; its checklist lists them
+for a person. Read the upstream changes
 before merging: these images run with GPU access on people's machines, and a pin
 only protects them if someone reads what changed.
 
@@ -114,17 +119,19 @@ Dispatch on `main` with two inputs:
   has no recipe here) is written `cuda=<tag>@<digest>`.
 - `gate_reports`: one `https` URL covering every runner, or `runner=URL` for each.
 
-**A llama.cpp bump is one run for the whole group**, because `standard`, `cpu` and
-`cuda` must name the same `b<N>` release (hal0's release gate,
-`python -m hal0.runners.pins --check-release`, fails otherwise):
+**A llama.cpp bump is one run for the whole group**: `standard` and `cpu` (the same
+`b<N>` release) and `cuda`. ggml-org does not publish `server-cuda` for every
+release, so `cuda` is promoted with the newest `server-cuda-b<M>` tag that exists,
+M at or below N. Release-watch keeps the `cuda` row of `images.json` on that tag.
 
 ```
-promotions:   standard=sha256:<a>,cpu=sha256:<b>,cuda=server-cuda-b11552@sha256:<c>
+promotions:   standard=sha256:<a>,cpu=sha256:<b>,cuda=server-cuda-b11541@sha256:<c>
 gate_reports: https://.../gate-b11552.json
 ```
 
-A group that mixes releases is refused. The other runners (`flm`, `comfyui`,
-`kokoro`, `moonshine`, `qwen3tts`) are promoted one at a time: `promotions: kokoro=sha256:<d>`.
+Promote refuses a group where `standard` and `cpu` differ, or where `cuda` is
+ahead of them. The other runners (`flm`, `comfyui`, `kokoro`, `moonshine`,
+`qwen3tts`) are promoted one at a time: `promotions: kokoro=sha256:<d>`.
 
 Every item is verified first, and nothing is opened unless all of them pass:
 

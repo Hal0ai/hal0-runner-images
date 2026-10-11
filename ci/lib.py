@@ -94,6 +94,40 @@ def github_get(path: str, token: str | None = None, timeout: int = 30):
         raise CIError(f"GitHub API {url}: {e.reason}")
 
 
+def ghcr_tags(image: str, timeout: int = 30) -> list[str]:
+    """Every tag of a public ghcr.io image (anonymous pull token, paginated).
+
+    The registry's tag order is not alphabetical, so the whole list is read.
+    """
+    repo = image.removeprefix("ghcr.io/")
+    try:
+        with urllib.request.urlopen(
+            f"https://ghcr.io/token?service=ghcr.io&scope=repository:{repo}:pull", timeout=timeout
+        ) as resp:
+            token = json.loads(resp.read())["token"]
+        url: str | None = f"https://ghcr.io/v2/{repo}/tags/list?n=1000"
+        tags: list[str] = []
+        while url:
+            req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                tags += json.loads(resp.read()).get("tags") or []
+                m = re.search(r'<([^>]+)>;\s*rel="next"', resp.headers.get("link", ""))
+                url = f"https://ghcr.io{m.group(1)}" if m else None
+        return tags
+    except (urllib.error.URLError, OSError, ValueError, KeyError) as e:
+        raise CIError(f"could not list the tags of {image}: {e}")
+
+
+def dump_like(doc: object, raw: str) -> str:
+    """Serialise `doc` the way the JSON text `raw` was written, so a diff shows only the edit."""
+    original = json.loads(raw)
+    for ensure_ascii in (False, True):
+        for indent in (2, 4):
+            if json.dumps(original, indent=indent, ensure_ascii=ensure_ascii) + "\n" == raw:
+                return json.dumps(doc, indent=indent, ensure_ascii=ensure_ascii) + "\n"
+    return json.dumps(doc, indent=2, ensure_ascii=False) + "\n"
+
+
 def set_output(name: str, value: str) -> None:
     """Write a step output (GITHUB_OUTPUT), or echo it when run by hand."""
     path = os.environ.get("GITHUB_OUTPUT")

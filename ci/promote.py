@@ -8,7 +8,8 @@
     promote.py hal0-pin  --result result.json --hal0-dir app/ [--create-missing]
 
 One run promotes one runner, or a group (the llama.cpp group: standard + cpu +
-cuda for the same b<N> release) into ONE images.json change and ONE hal0 change.
+cuda, which lags with the newest server-cuda-b<M> that exists) into ONE
+images.json change and ONE hal0 change.
 
 `verify` refuses any item that is not (a) an existing image in its package
 (an external runner such as cuda, which has no recipe here, is checked for
@@ -18,7 +19,8 @@ signed provenance attestation, not through the tag), (c) reachable under its
 immutable tag at that same digest, and (d) backed by a gate report that is
 valid hal0.gate-report.v1 JSON, names the same digest and passed. Anything else,
 including a report that is not JSON, fails the whole run: nothing is promoted
-unless every item verifies. A group that mixes llama.cpp releases is refused.
+unless every item verifies. standard and cpu must name one llama.cpp release and
+cuda may not be ahead of it.
 
 A gate report is either one runner's document or a group document
 ({"schema": ..., "runners": [<per-runner documents>]}); one URL may cover every
@@ -66,16 +68,6 @@ TAG_LABEL = "org.opencontainers.image.version"
 
 # ---- JSON file editing (pure, tested) --------------------------------------
 
-def dump_like(doc: object, raw: str) -> str:
-    """Serialise `doc` the way `raw` was written, so the PR diff is only the pin."""
-    original = json.loads(raw)
-    for ensure_ascii in (False, True):
-        for indent in (2, 4):
-            if json.dumps(original, indent=indent, ensure_ascii=ensure_ascii) + "\n" == raw:
-                return json.dumps(doc, indent=indent, ensure_ascii=ensure_ascii) + "\n"
-    return json.dumps(doc, indent=2, ensure_ascii=False) + "\n"
-
-
 def catalogue_entries(doc: dict) -> list:
     entries = doc.get(CATALOGUE_LIST_KEY)
     if not isinstance(entries, list):
@@ -102,7 +94,7 @@ def edit_catalogue(raw: str, items: list[dict]) -> str:
                              ("lanes_gated", item["lanes_gated"])):  # lanes are admitted by evidence
             if field in entry:
                 entry[field] = value
-    return dump_like(doc, raw)
+    return lib.dump_like(doc, raw)
 
 
 def edit_hal0_pins(raw: str, items: list[dict], create_missing: bool = False) -> str:
@@ -119,7 +111,7 @@ def edit_hal0_pins(raw: str, items: list[dict], create_missing: bool = False) ->
                                   "hal0 must add the runner first (or re-run with create_missing)")
             table[key] = {}
         table[key].update(hal0_row(item))
-    return dump_like(doc, raw)
+    return lib.dump_like(doc, raw)
 
 
 # ---- the group (pure, tested) ----------------------------------------------
@@ -175,22 +167,36 @@ def parse_gate_reports(text: str, keys: list[str]) -> dict[str, str]:
     return {k: per_key.get(k) or default for k in keys}
 
 
-LLAMA_GROUP = ("standard", "cpu", "cuda")
+LLAMA_GROUP = ("standard", "cpu")   # built here, always the same b<N> release
+CUDA = "cuda"                         # ggml-org's image: the newest server-cuda-b<M> with M <= N
 
 
-def llama_release(tag: str) -> str | None:
+def llama_release(tag: str) -> int | None:
     m = LLAMA_RELEASE.search(tag)
-    return f"b{m.group(1)}" if m else None
+    return int(m.group(1)) if m else None
 
 
-def check_group(items: list[dict]) -> str | None:
-    """Refuse a group that mixes llama.cpp releases. Returns the release, if any."""
-    releases = {i["runner"]: llama_release(i["tag"]) for i in items if i["runner"] in LLAMA_GROUP}
-    if None in releases.values():
-        raise lib.CIError(f"cannot read a b<N> release from the tag of {[k for k, v in releases.items() if v is None]}")
-    if len(set(releases.values())) > 1:
-        raise lib.CIError(f"the llama.cpp group names different releases: {releases}")
-    return next(iter(releases.values()), None)
+def check_group(items: list[dict]) -> int | None:
+    """standard and cpu must name one release; cuda may not be ahead of it.
+
+    ggml-org does not publish server-cuda for every release, so cuda is promoted
+    with the newest tag that exists (M <= N). Returns N, or None when neither
+    standard nor cpu is in the group.
+    """
+    built = {i["runner"]: llama_release(i["tag"]) for i in items if i["runner"] in LLAMA_GROUP}
+    if None in built.values():
+        raise lib.CIError(f"cannot read a b<N> release from the tag of {[k for k, v in built.items() if v is None]}")
+    if len(set(built.values())) > 1:
+        raise lib.CIError(f"standard and cpu must pin the same llama.cpp release, got {built}")
+    release = next(iter(built.values()), None)
+    for i in items:
+        if i["runner"] == CUDA:
+            m = llama_release(i["tag"])
+            if m is None:
+                raise lib.CIError(f"cannot read a b<M> release from the cuda tag {i['tag']!r}")
+            if release is not None and m > release:
+                raise lib.CIError(f"cuda tag {i['tag']} is ahead of the group's release b{release}")
+    return release
 
 
 def describe(items: list[dict]) -> tuple[str, str]:
@@ -202,8 +208,9 @@ def describe(items: list[dict]) -> tuple[str, str]:
         branch = f"bot/promote-{keys[0]}-{items[0]['tag']}"
     else:
         digests = hashlib.sha256("".join(sorted(i["digest"] for i in items)).encode()).hexdigest()[:7]
-        what = f"llama.cpp {release}" if release and set(keys) <= set(LLAMA_GROUP) else f"{len(keys)} runners"
-        label = f"{', '.join(keys)} to {what}"
+        what = f"llama.cpp b{release}" if release and set(keys) <= {*LLAMA_GROUP, CUDA} else f"{len(keys)} runners"
+        cuda = next((i["tag"] for i in items if i["runner"] == CUDA), "")
+        label = f"{', '.join(keys)} to {what}" + (f" (cuda {cuda})" if cuda and release else "")
         branch = f"bot/promote-{'-'.join(sorted(keys))}-{digests}"
     return branch, f"chore(runners): pin {label}"
 
@@ -369,7 +376,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
     docs = {u: fetch_gate_report(u, args.token) for u in set(urls.values())}
     built = lib.runner_keys()
     results = [verify_item(i, docs[urls[i["runner"]]], urls[i["runner"]], built) for i in items]
-    branch, title = describe(results)  # also refuses a group that mixes llama.cpp releases
+    branch, title = describe(results)  # also refuses a mismatched llama.cpp group
 
     Path(args.out).write_text(json.dumps({"items": results}, indent=2) + "\n")
     print(json.dumps({"items": results}, indent=2))
