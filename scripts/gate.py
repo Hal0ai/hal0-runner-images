@@ -394,6 +394,9 @@ class Models:
 # ---------------------------------------------------------------------------
 
 NODE_MEMINFO = "/sys/devices/system/node/node0/meminfo"
+#: One gate at a time per host (Host.lock). HAL0_GATE_LOCK overrides the path.
+LOCK_FILE = "/tmp/hal0-gate.lock"
+LOCK_ENV = "HAL0_GATE_LOCK"
 
 
 def parse_meminfo(text: str) -> dict[str, int]:
@@ -1147,14 +1150,28 @@ class Host:
         return True
 
     def lock(self) -> None:
-        """One gate at a time on this host: two would load two models at once."""
-        path = Path(os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()) / "hal0-gate.lock"
-        self._lock = open(path, "a")
+        """One gate at a time on this host, whoever runs it: two would load two
+        models at once. One fixed path for every user (not $TMPDIR or
+        $XDG_RUNTIME_DIR, which are per user), mode 0666. An existing file is
+        opened without O_CREAT, which fs.protected_regular would refuse for a
+        file another user created in /tmp."""
+        path = os.environ.get(LOCK_ENV) or LOCK_FILE
         try:
-            fcntl.flock(self._lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fd = os.open(path, os.O_RDWR)
+        except FileNotFoundError:
+            try:
+                fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o666)
+                os.fchmod(fd, 0o666)
+            except FileExistsError:
+                fd = os.open(path, os.O_RDWR)
+        except OSError as e:
+            raise GateError(f"cannot open the host gate lock {path}: {e}")
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
-            self._lock.close()
-            raise GateError("another scripts/gate.py run holds the host lock; one gate at a time")
+            os.close(fd)
+            raise GateError(f"another scripts/gate.py run holds {path}; one gate at a time on a host")
+        self._lock = fd
 
     def cleanup(self) -> None:
         for name in sorted(self.containers):
@@ -1163,8 +1180,8 @@ class Host:
         if self._tmp:
             shutil.rmtree(self._tmp, ignore_errors=True)
             self._tmp = None
-        if getattr(self, "_lock", None):
-            self._lock.close()  # releases the flock
+        if getattr(self, "_lock", None) is not None:
+            os.close(self._lock)  # releases the flock
             self._lock = None
 
 

@@ -115,8 +115,9 @@ script. For each runner it:
    if available memory falls below half of that;
 4. removes every container it started, on success, failure or Ctrl-C, and on
    start removes any `gate-<key>-<pid>-*` container whose run (`<pid>`) no longer
-   exists. A lock file (`$XDG_RUNTIME_DIR/hal0-gate.lock`) keeps a second gate
-   from starting on the same host while one runs.
+   exists. A lock on `/tmp/hal0-gate.lock` (one path for every user, mode 0666;
+   `HAL0_GATE_LOCK` overrides it) keeps a second gate from starting on the host
+   while one runs, whoever starts it.
 
 It never touches hal0's slots, units or configuration, but it shares the GPU
 and memory with them: run it in an agreed GPU window. Its containers are named

@@ -566,9 +566,10 @@ class GateRunTests(unittest.TestCase):
 
     def test_one_gate_at_a_time(self):
         import os
+        self.assertEqual(gate.LOCK_FILE, "/tmp/hal0-gate.lock")  # one path for every user, not $TMPDIR
         with tempfile.TemporaryDirectory() as d:
-            old = os.environ.get("XDG_RUNTIME_DIR")
-            os.environ["XDG_RUNTIME_DIR"] = d
+            old = os.environ.get(gate.LOCK_ENV)
+            os.environ[gate.LOCK_ENV] = str(Path(d) / "hal0-gate.lock")
             try:
                 first, second = gate.Host(verbose=False), gate.Host(verbose=False)
                 first.lock()
@@ -577,11 +578,12 @@ class GateRunTests(unittest.TestCase):
                 first.cleanup()
                 second.lock()  # free again once the first run is done
                 second.cleanup()
+                self.assertEqual(os.stat(os.environ[gate.LOCK_ENV]).st_mode & 0o777, 0o666)
             finally:
                 if old is None:
-                    os.environ.pop("XDG_RUNTIME_DIR")
+                    os.environ.pop(gate.LOCK_ENV)
                 else:
-                    os.environ["XDG_RUNTIME_DIR"] = old
+                    os.environ[gate.LOCK_ENV] = old
 
     def test_an_unconfigured_model_is_a_skip(self):
         self.models.entries.clear()
