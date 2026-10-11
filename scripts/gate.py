@@ -1982,13 +1982,31 @@ def utc_now() -> dt.datetime:
 GUARDED_PATHS = ("gates", "scripts", "ci")
 
 
+def git_environment(env: dict[str, str] | None = None) -> dict[str, str]:
+    """The caller's environment without any GIT_* variable. GIT_DIR,
+    GIT_WORK_TREE, GIT_INDEX_FILE, GIT_OBJECT_DIRECTORY,
+    GIT_ALTERNATE_OBJECT_DIRECTORIES, GIT_COMMON_DIR, GIT_CEILING_DIRECTORIES,
+    GIT_CONFIG_* (which can set core.worktree) and the like can point git at
+    another repository, index or work tree. Then a clean answer about some
+    other tree would let a dirty checkout run and record the wrong revision.
+    Both checks below only read, so none of those variables is needed."""
+    out = {k: v for k, v in (os.environ if env is None else env).items() if not k.startswith("GIT_")}
+    out["GIT_OPTIONAL_LOCKS"] = "0"  # git status must not take index.lock
+    return out
+
+
+def git(*args: str) -> list[str]:
+    """argv for git on this checkout, whatever the current directory."""
+    return ["git", "-C", str(ROOT), *args]
+
+
 def tree_problems(run: Callable = subprocess.run) -> list[str]:
     """Why this checkout cannot vouch for gate.revision: every changed, staged or
     untracked file under GUARDED_PATHS (ignored files such as __pycache__ do
     not count), or why git could not tell. Empty when the tree is clean."""
     try:
-        cp = run(["git", "status", "--porcelain", "--untracked-files=all", "--", *GUARDED_PATHS],
-                 cwd=ROOT, capture_output=True, text=True)
+        cp = run(git("status", "--porcelain", "--untracked-files=all", "--", *GUARDED_PATHS),
+                 cwd=ROOT, env=git_environment(), capture_output=True, text=True)
     except OSError as e:
         return [f"git is not available: {e}"]
     if cp.returncode != 0:
@@ -1996,9 +2014,9 @@ def tree_problems(run: Callable = subprocess.run) -> list[str]:
     return [line.rstrip() for line in cp.stdout.splitlines() if line.strip()]
 
 
-def git_revision() -> str:
+def git_revision(run: Callable = subprocess.run) -> str:
     try:
-        cp = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True)
+        cp = run(git("rev-parse", "HEAD"), cwd=ROOT, env=git_environment(), capture_output=True, text=True)
     except OSError:
         return ""
     return cp.stdout.strip() if cp.returncode == 0 else ""

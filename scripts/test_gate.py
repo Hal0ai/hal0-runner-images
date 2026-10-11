@@ -11,6 +11,7 @@ from __future__ import annotations
 import io
 import json
 import math
+import shutil
 import struct
 import subprocess
 import sys
@@ -689,7 +690,7 @@ class GateRunTests(unittest.TestCase):
             seen.append(argv)
             return subprocess.CompletedProcess(argv, 0, " M gates/standard.toml\n?? ci/new.py\n", "")
         self.assertEqual(gate.tree_problems(run), [" M gates/standard.toml", "?? ci/new.py"])
-        self.assertEqual(seen[0][:4], ["git", "status", "--porcelain", "--untracked-files=all"])
+        self.assertEqual(seen[0][:6], ["git", "-C", str(gate.ROOT), "status", "--porcelain", "--untracked-files=all"])
         self.assertEqual(seen[0][-3:], ["gates", "scripts", "ci"])
         clean = lambda argv, **kw: subprocess.CompletedProcess(argv, 0, "", "")
         self.assertEqual(gate.tree_problems(clean), [])
@@ -699,6 +700,61 @@ class GateRunTests(unittest.TestCase):
         def missing(argv, **kw):
             raise FileNotFoundError("git")
         self.assertIn("git is not available", gate.tree_problems(missing)[0])
+
+    def test_git_environment_drops_every_repository_override(self):
+        env = gate.git_environment({"PATH": "/bin", "HOME": "/h", "GIT_DIR": "/x/.git", "GIT_WORK_TREE": "/x",
+                                    "GIT_INDEX_FILE": "/x/i", "GIT_OBJECT_DIRECTORY": "/o",
+                                    "GIT_ALTERNATE_OBJECT_DIRECTORIES": "/a", "GIT_COMMON_DIR": "/c",
+                                    "GIT_CEILING_DIRECTORIES": "/", "GIT_CONFIG_COUNT": "1",
+                                    "GIT_CONFIG_KEY_0": "core.worktree", "GIT_CONFIG_VALUE_0": "/x",
+                                    "GIT_CONFIG_PARAMETERS": "'core.worktree'='/x'"})
+        self.assertEqual(env, {"PATH": "/bin", "HOME": "/h", "GIT_OPTIONAL_LOCKS": "0"})
+
+    def test_a_hostile_git_environment_cannot_vouch_for_this_checkout(self):
+        """GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE pointing at a clean repository
+        must not make a dirty checkout look clean or change the revision."""
+        import os
+        if shutil.which("git") is None:
+            self.skipTest("git is not installed")
+        clean_env = gate.git_environment()
+
+        def sh(cwd, *args):
+            return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                                   "-c", "commit.gpgsign=false", *args], cwd=cwd, env=clean_env,
+                                  capture_output=True, text=True, check=True).stdout.strip()
+
+        with tempfile.TemporaryDirectory() as d:
+            mine, other = Path(d) / "mine", Path(d) / "other"
+            for repo in (mine, other):
+                (repo / "gates").mkdir(parents=True)
+                (repo / "gates" / "cpu.toml").write_text(repo.name)
+                sh(repo, "init", "-q")
+                sh(repo, "add", "-A")
+                sh(repo, "commit", "-q", "-m", repo.name)
+            (mine / "gates" / "cpu.toml").write_text("edited, not committed")
+            want_rev = sh(mine, "rev-parse", "HEAD")
+            hostile = {"GIT_DIR": str(other / ".git"), "GIT_WORK_TREE": str(other),
+                       "GIT_INDEX_FILE": str(other / ".git" / "index"),
+                       "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.worktree", "GIT_CONFIG_VALUE_0": str(other)}
+            saved_root, saved_env = gate.ROOT, {k: os.environ.get(k) for k in hostile}
+            gate.ROOT = mine
+            os.environ.update(hostile)
+            try:
+                # unsanitised git would answer for `other`: clean, and its revision
+                leaked = subprocess.run(["git", "-C", str(mine), "status", "--porcelain"],
+                                        capture_output=True, text=True).stdout
+                self.assertEqual(leaked.strip(), "")
+                self.assertEqual(gate.tree_problems(), [" M gates/cpu.toml"])
+                self.assertEqual(gate.git_revision(), want_rev)
+                self.assertNotEqual(want_rev, sh(other, "rev-parse", "HEAD"))
+            finally:
+                gate.ROOT = saved_root
+                for k, v in saved_env.items():
+                    if v is None:
+                        os.environ.pop(k, None)
+                    else:
+                        os.environ[k] = v
+
 
 class CheckTests(unittest.TestCase):
     """Session checks against canned server responses."""
