@@ -23,7 +23,9 @@ doc = "llama-server --version reports the release pinned in runners/llama.cpp.to
 kind = "exec"
 lanes = []
 args = ["--version"]
-expect = ["version: {version_digits}\\b"]
+#: llama.cpp prints "version: 0.6.0-dev (build 11552, commit 23b0202a1)" by
+#: b11552; earlier releases printed "version: <build> (<commit>)".
+expect = ["\\(build {version_digits}, commit "]
 
 [[probe]]
 name = "no-gpu-devices"

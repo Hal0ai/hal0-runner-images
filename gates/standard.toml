@@ -35,7 +35,9 @@ doc = "llama-server --version reports the llama.cpp release pinned in runners/ll
 kind = "exec"
 lanes = ["rocm"]
 args = ["--version"]
-expect = ["version: {version_digits}\\b"]
+#: llama.cpp prints "version: 0.6.0-dev (build 11552, commit 23b0202a1)" by
+#: b11552; earlier releases printed "version: <build> (<commit>)".
+expect = ["\\(build {version_digits}, commit "]
 
 [[probe]]
 name = "no-gpu-exit-78"

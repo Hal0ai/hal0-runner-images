@@ -487,7 +487,8 @@ class GateRunTests(unittest.TestCase):
 
         def exec_out(argv):
             if "--version" in argv:
-                return 0, f"version: {self.version_digits} (23b0202a)\nbuilt with cc"
+                return 0, (f"version: 0.6.0-dev (build {self.version_digits}, commit 23b0202a1) "
+                          "built with GNU 13.3.0 for Linux x86_64")
             return 0, "Available devices:\n"
         return FakeHost(http, self.labels, exec_out=exec_out, **kw)
 
