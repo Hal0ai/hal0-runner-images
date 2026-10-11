@@ -1,0 +1,76 @@
+# runners/cpu — llama.cpp on the processor, no GPU.
+#
+# The same llama.cpp release as runners/standard, built CPU-only the way
+# upstream builds its own CPU image: every x86_64 CPU variant as a loadable
+# backend (GGML_BACKEND_DL + GGML_CPU_ALL_VARIANTS), so one image runs on any
+# x86_64 box and picks the fastest instruction set at start-up. A binary tuned
+# to the build machine is what made the old `cpu` runner crash with SIGILL on
+# other hosts (hal0 #2126).
+#
+# Build:   python3 scripts/runner.py build cpu
+# Check:   python3 scripts/runner.py build cpu --check
+
+[runner]
+key = "cpu"
+title = "CPU"
+summary = "llama.cpp on the processor, no GPU needed. A slow fallback for boxes without a supported GPU."
+family = "llama-server"
+backends = ["cpu"]
+tier = "default"
+
+[image]
+package = "ghcr.io/hal0ai/hal0-runner-cpu"
+#: version = the llama.cpp release from runners/llama.cpp.toml. Tag =
+#: <version>-r<sha7>, e.g. b11552-r1a2b3c4.
+
+[source]
+#: The llama.cpp repo, release and commit come from runners/llama.cpp.toml,
+#: shared with runners/cpu, runners/standard and the external cuda entry.
+pin = "llama.cpp.toml"
+#: Clone on the host into the build context's src/ and apply patches there,
+#: so `--check` needs no container runtime.
+checkout = true
+
+[build]
+heavy = false
+timeout_minutes = 90
+cmake_flags = [
+    "-DCMAKE_BUILD_TYPE=Release",
+    "-DGGML_VULKAN=OFF",
+    "-DGGML_CUDA=OFF",
+    "-DGGML_HIP=OFF",
+    "-DGGML_RPC=OFF",
+    "-DGGML_NATIVE=OFF",
+    "-DGGML_BACKEND_DL=ON",
+    "-DGGML_CPU_ALL_VARIANTS=ON",
+    "-DBUILD_SHARED_LIBS=ON",
+    "-DLLAMA_BUILD_SERVER=ON",
+    "-DLLAMA_BUILD_UI=OFF",
+    "-DLLAMA_USE_PREBUILT_UI=OFF",
+    "-DLLAMA_BUILD_TESTS=OFF",
+    "-DGGML_BUILD_TESTS=OFF",
+    "-DLLAMA_BUILD_EXAMPLES=OFF",
+]
+
+[build.args]
+UBUNTU = "docker.io/library/ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55"
+
+[verification]
+boxes = ["any x86_64 box with no GPU passed through", "the Strix Halo box"]
+probes = [
+    "llama-server --version reports the release pinned in runners/llama.cpp.toml; --list-devices shows no GPU",
+    "a small GGUF (e.g. qwen2.5-0.5b-instruct Q4_K_M) loads with -ngl 0 and answers a temp-0 prompt",
+    "the same request on a host without AVX-512 (any GitHub runner) and on the Strix Halo box: both answer, no SIGILL",
+    "the hal0 slot renders --port and /health answers on it (llama-server's own default is 9931 since #30159)",
+]
+
+[lifecycle]
+purpose = "CPU fallback for llama.cpp models on boxes without a supported GPU."
+needed_for = ["device = \"cpu\" llama slots", "CI slot-integration tests on GitHub runners (no GPU)"]
+retire_when = "Never as a recipe. It moves with runners/standard's llama.cpp release."
+
+[lifecycle.track]
+kind = "github-release"
+pattern = "^b[0-9]+$"
+#: ggml-org publishes every bNNNNN build as a GitHub prerelease.
+include_prereleases = true

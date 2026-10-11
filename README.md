@@ -1,84 +1,77 @@
 # hal0-runner-images
 
-Build sources + digest-pin registry for the container images
-[Hal0ai/hal0](https://github.com/Hal0ai/hal0) runs as slot runners on AMD
-Strix Halo (gfx1151) boxes. Split out of the app repo so heavy/slow GPU-image
-CI is isolated and the supply chain is hal0-owned end to end.
+The container images [hal0](https://github.com/Hal0ai/hal0) runs as slot
+runners, and the catalogue that tells hal0 which ones exist. Every image is
+built here, in CI, from a recipe in `runners/<key>/`.
 
-## Model: single pipeline
+## The runners
 
-This repo is the single pipeline for every hal0 toolbox/runner image (see
-`docs/CONSOLIDATION.md`). `images.json` is the source of truth for **which**
-runner images exist (each entry is a hal0 catalogue row). Kinds:
+One name per runner, used everywhere: the hal0 runner key, the catalogue
+`id`, the recipe directory `runners/<key>/` and the package
+`ghcr.io/hal0ai/hal0-runner-<key>`.
 
-- **owned, publish `ci`** — Dockerfile here; `build-matrix.yml` builds +
-  pushes it. Today: `comfyui`.
-- **owned, publish `external`** — recipe here, but the consumed image was
-  published from another lineage and is digest-pinned; CI must not repush it.
-  `cpu`, `flm`, `kokoro`, `moonshine`, `qwen3tts`, and the hand-built
-  runners under `runners/` (`rocmfpx-combined`, `combined-upstream`, `strix`,
-  `promptforge`).
-- **referenced** — source in another hal0 repo, pinned only
-  (`rocmfpx-hy3` → `Hal0ai/Hal0_ROCmFPX`), plus the dead `vulkan`/`rocm`
-  pins that no live builder produces. See `external/`.
+| key | title | what it runs | upstream pin | tier |
+|---|---|---|---|---|
+| `standard` | Standard | llama.cpp on AMD GPUs, ROCm and Vulkan (gfx1151) | ggml-org/llama.cpp release `b11552` | default |
+| `cpu` | CPU | llama.cpp on the processor, any x86_64 box | ggml-org/llama.cpp release `b11552` | default |
+| `flm` | NPU (FastFlowLM) | FastFlowLM on the AMD XDNA 2 NPU | ROCm/FastFlowLM `v0.9.44` | default |
+| `kokoro` | Kokoro speech | text-to-speech on the CPU | kokoro-onnx `0.4.9` | default |
+| `moonshine` | Moonshine transcription | speech-to-text on the CPU | useful-moonshine-onnx `20251121` | default |
+| `comfyui` | ComfyUI | image and video generation on the GPU (ROCm) | Comfy-Org/ComfyUI `0.28.0` (commit `c9602625`) | default |
+| `qwen3tts` | Qwen3 TTS | multilingual text-to-speech on the GPU (ROCm) | qwen-tts `0.1.1` | optional |
+| `cuda` | NVIDIA CUDA | llama.cpp on NVIDIA GPUs | ggml-org's own image `server-cuda-b11541` (not built here) | optional |
 
-`build-recipes.json` lists build targets that are **not** catalogue rows:
-`strix-base/` (the ROCm base every runner recipe FROMs by digest) and
-`llama-vulkan/` (hal0's `FALLBACK_VULKAN_IMAGE` lineage). Both moved here from
-`Hal0ai/amd-strix-halo-toolboxes` with their llama.cpp source pinned to a SHA.
+`standard` is the default for AMD GPUs: unmodified upstream llama.cpp at a
+tagged release with one small patch, ROCm 10.0 and Vulkan (RADV) in one
+image. `standard` and `cpu` share one llama.cpp release, pinned in
+`runners/llama.cpp.toml`, so one change moves both. `cuda` is ggml-org's own
+CUDA image; ggml-org does not publish one for every release, so `cuda` pins
+the newest `server-cuda-b<N>` that is not newer than that release.
 
-The app keeps consuming `manifest.json`; this repo's CI resolves published
-ghcr digests (`scripts/emit-manifest.sh`) and opens a manifest-bump PR against
-the app. The app resolver is unchanged — see `docs/WIRING.md`.
+## Tags
 
-The app's dashboard **Runner Images** page also consumes `images.json`
-directly: its sync fetches
-`raw.githubusercontent.com/Hal0ai/hal0-runner-images/main/images.json`
-(schema `hal0.runner-images.v1`: top-level `schema` string + `images`
-**array**, each entry keyed by `id`) and probes ghcr anonymously for
-tag/digest/size. Keep that shape stable — the app degrades to
-GHCR-only rows when the file fails to parse.
+Every build gets one tag that never moves: `<upstream version>-r<recipe sha7>`,
+for example `hal0-runner-standard:b11552-r1a2b3c4` or
+`hal0-runner-flm:0.9.44-r1a2b3c4`. `<recipe sha7>` is the last commit that
+changed `runners/<key>/` (or the shared pin file it uses), so an unchanged recipe always has the same tag and a
+pushed tag is never pushed again. There are no `latest`, `main` or `v1` tags.
+hal0 pins `image:tag@digest`; the digest is what counts.
 
 ## Layout
 
 ```
-images.json                  catalogue source of truth (owned + referenced, pins, build info)
-build-recipes.json           non-catalogue build targets (strix-base, llama-vulkan)
-cpu/ flm/ kokoro/            owned toolbox Dockerfiles (+ context)
-moonshine/ qwen3tts/
-comfyui/                     hal0-owned ComfyUI (gfx1151 ROCm) + versions.env
-strix-base/                  ROCm 7.2.4 + rocmfp4 llama.cpp base (runners' [base])
-llama-vulkan/                llama.cpp Vulkan RADV server (FALLBACK_VULKAN_IMAGE lineage)
-runners/                     runner recipes: manifest.toml + build.sh + patches (CI-built)
-  rocmfpx/ upstream/ strix/ promptforge/
-external/README.md           referenced sources (not vendored) + how to bump
-retention-allowlist.json     refs the GHCR retention sweep must never delete
-scripts/emit-manifest.sh     resolve ghcr digests -> patch app manifest.json
-scripts/retention.py         GHCR retention sweep (dry-run default)
-scripts/test_*.py            stdlib checks: python3 scripts/test_repo_consistency.py
-scripts/fork_watch.py        weekly pin-vs-branch report (fork-watch.yml)
-docs/BUMPING.md              how a runner is bumped or retired
-.github/workflows/build-matrix.yml   dispatch-only builds (publish:ci + build-recipes.json + runners/<dir>)
-.github/workflows/fork-watch.yml     weekly pin-vs-branch report on one tracking issue (builds nothing)
-.github/workflows/checks.yml         stdlib checks on every PR
-.github/workflows/pin-digests.yml    resolve published digests -> bump-PR app manifest (BUILD-FREE)
-.github/workflows/retention.yml      scheduled retention sweep
-docs/CONSOLIDATION.md        what moved here, and what later phases still owe
-docs/PROVENANCE.md           where every source really lives
-docs/WIRING.md               how the app consumes these images
+runners/<key>/manifest.toml   every pin for one runner: base images by digest, upstream source,
+                              build arguments, patches, the hardware gate, why it exists
+runners/<key>/Containerfile   the image definition (no pin defaults; values come from the manifest)
+runners/<key>/...             patches/, the entrypoint, server code, requirements.txt
+runners/llama.cpp.toml        the llama.cpp release shared by standard, cpu and cuda
+images.json                   the catalogue hal0 reads (docs/SCHEMA.md)
+retention-allowlist.json      old packages the GHCR cleanup must keep for installed boxes
+scripts/runner.py             builds any runner: list, tag, build, build --check
+scripts/source_watch.py       weekly report: which upstreams have a newer release
+scripts/retention.py          GHCR cleanup (dry run unless asked to delete)
+scripts/test_*.py             stdlib checks, run on every pull request
+docs/UPDATING.md              how a runner is updated, built, gated and pinned (the CI flow)
+docs/RECIPES.md               what goes in a recipe and how to change one
+docs/SCHEMA.md                the images.json format
+docs/HAL0.md                  how hal0 uses these images
 ```
 
-## Status
+## Building locally
 
-- Owned Dockerfiles present. **kokoro/moonshine were reconstructed** from
-  published-image history (their Dockerfiles were never in the app repo) —
-  verify a rebuild matches the pinned digest before trusting them as source.
-- **comfyui** is a hal0-owned single ROCm image replacing third-party kyuz0.
-  `comfyui/versions.env` pins every input: the `*_REF` values are commit SHAs
-  (resolved 2026-07-19), the base is digest-pinned, and the torch triple is a
-  dated nightly.
-- `pin-digests.yml` (the manifest bump) needs the `HAL0_MANIFEST_PR_TOKEN`
-  secret (Contents+PR write on Hal0ai/hal0) — already set. Referenced/external
-  images build in their own repos; only their digests are re-pinned here.
+```
+python3 scripts/runner.py list                      # every runner, its image and next tag
+python3 scripts/runner.py build standard --check    # clone the source, apply patches, build nothing
+python3 scripts/runner.py build kokoro              # build with docker or podman (no push)
+```
 
-See `docs/PROVENANCE.md` for the full corrected inventory.
+The checks need only Python 3.11+ and git:
+
+```
+python3 scripts/test_repo_consistency.py
+python3 scripts/test_retention_fixtures.py
+python3 scripts/test_source_watch.py
+```
+
+To change a runner, see [docs/RECIPES.md](docs/RECIPES.md) for the recipe and
+[docs/UPDATING.md](docs/UPDATING.md) for the build, gate and pin flow.

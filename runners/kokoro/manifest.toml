@@ -1,0 +1,48 @@
+# runners/kokoro — Kokoro-82M text-to-speech on the CPU.
+#
+# A small FastAPI server (kokoro_server.py, hal0's own code) around the
+# kokoro-onnx package. OpenAI-compatible /v1/audio/speech.
+#
+# Build:   python3 scripts/runner.py build kokoro
+
+[runner]
+key = "kokoro"
+title = "Kokoro speech"
+summary = "Text-to-speech on the CPU. Works on any box, no GPU needed."
+family = "kokoro"
+backends = ["cpu"]
+tier = "default"
+
+[image]
+package = "ghcr.io/hal0ai/hal0-runner-kokoro"
+version = "0.4.9"
+
+[source]
+kind = "pypi"
+package = "kokoro-onnx"
+version = "0.4.9"
+repo = "https://github.com/thewh1teagle/kokoro-onnx"
+
+[build]
+heavy = false
+timeout_minutes = 45
+
+[build.args]
+PYTHON = "docker.io/library/python:3.12.13-bookworm@sha256:3cd9086bdb30f7c9bc08a3fa621d9842e0d3f6f9291aeb4677e0547817c10b12"
+PIP_VERSION = "26.1.1"
+
+[verification]
+boxes = ["any x86_64 box"]
+probes = [
+    "the build's `pip check` passes (part of the Containerfile)",
+    "with the Kokoro model mounted, /health returns 200 with model_loaded=true and lists the voices",
+    "POST /v1/audio/speech with the default voice returns playable audio",
+]
+
+[lifecycle]
+purpose = "Default text-to-speech: light enough for the CPU on any box."
+needed_for = ["hal0 TTS slots (Kokoro-82M ONNX)"]
+retire_when = "When hal0 replaces Kokoro as its default CPU voice."
+
+[lifecycle.track]
+kind = "pypi"

@@ -1,0 +1,53 @@
+# check=skip=InvalidDefaultArgInFrom
+# hal0-runner-cpu: llama.cpp CPU-only, every x86_64 CPU variant as a
+# loadable backend, so the image runs on any x86_64 host.
+#
+# Build it with `python3 scripts/runner.py build cpu`, which clones the
+# pinned llama.cpp release into ./src and passes the manifest values as
+# --build-arg. The base ARG has no default: manifest.toml is the only place
+# a pin lives.
+#
+# Contract with hal0:
+#   - ENTRYPOINT is llama-server itself. hal0 renders the slot's arguments
+#     only (including --port), never the binary name.
+#   - binaries and the ggml backend libraries live in /opt/hal0/bin.
+#   - runs as the non-root hal0 user (uid/gid 1000); models bind-mount
+#     under /var/lib/hal0/models.
+
+ARG UBUNTU
+
+# ------------------------------------------------------------------ builder
+FROM ${UBUNTU} AS builder
+ARG DEBIAN_FRONTEND=noninteractive
+ARG CMAKE_FLAGS
+ARG JOBS=4
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential cmake ninja-build git ca-certificates pkg-config libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+COPY src/ /src/
+WORKDIR /src
+RUN git config --global --add safe.directory /src \
+    && cmake -S . -B build -G Ninja ${CMAKE_FLAGS} \
+    && cmake --build build -j "${JOBS}" --target llama-server \
+    && mkdir -p /out \
+    && cp build/bin/llama-server /out/ \
+    && find build -name '*.so*' -exec cp -P {} /out/ \;
+
+# ------------------------------------------------------------------ runtime
+FROM ${UBUNTU} AS runtime
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgomp1 libssl3t64 ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
+COPY --from=builder /out/ /opt/hal0/bin/
+ENV PATH=/opt/hal0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    LD_LIBRARY_PATH=/opt/hal0/bin
+RUN userdel --remove ubuntu 2>/dev/null || true \
+    && groupadd --system --gid 1000 hal0 \
+    && useradd  --system --uid 1000 --gid 1000 --shell /usr/sbin/nologin hal0 \
+    && mkdir -p /var/lib/hal0/models && chown -R hal0:hal0 /var/lib/hal0
+USER hal0
+WORKDIR /var/lib/hal0
+EXPOSE 8080
+ENTRYPOINT ["/opt/hal0/bin/llama-server"]
+CMD ["--help"]

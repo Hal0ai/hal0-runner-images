@@ -1,7 +1,8 @@
 name: Checks
 
-# The stdlib consistency checks, on every pull request and push to main.
-# No network beyond checkout, no container runtime, nothing built.
+# Offline checks on every pull request and push to main: the stdlib tests
+# (scripts/test_*.py, ci/test_*.py) and a lint of the workflows. Nothing is
+# built and nothing needs the network beyond checkout and the lint image.
 
 on:
   pull_request:
@@ -12,11 +13,30 @@ permissions:
   contents: read
 
 jobs:
-  checks:
+  tests:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
-      - run: python3 scripts/test_repo_consistency.py
-      - run: python3 scripts/test_retention_fixtures.py
-      - run: python3 scripts/test_fork_watch.py
+      - name: Run every test file
+        run: |
+          set -euo pipefail
+          for t in scripts/test_*.py ci/test_*.py; do
+            echo "::group::$t"
+            python3 "$t"
+            echo "::endgroup::"
+          done
+
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      # actionlint also runs shellcheck over every `run:` block.
+      - name: actionlint
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color
+      - name: shellcheck
+        run: |
+          shopt -s globstar nullglob
+          files=(scripts/**/*.sh ci/**/*.sh runners/**/*.sh)
+          if (( ${#files[@]} )); then shellcheck "${files[@]}"; fi

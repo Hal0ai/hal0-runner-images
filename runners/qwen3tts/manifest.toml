@@ -1,0 +1,50 @@
+# runners/qwen3tts — Qwen3-TTS multilingual text-to-speech on the GPU (ROCm).
+#
+# A FastAPI server (qwen3tts_server.py, hal0's own code) around the qwen-tts
+# package, on AMD's rocm/pytorch image. Same /v1/audio/speech contract as
+# runners/kokoro, so it is a drop-in alternative voice.
+#
+# Build:   python3 scripts/runner.py build qwen3tts
+
+[runner]
+key = "qwen3tts"
+title = "Qwen3 TTS"
+summary = "Higher-quality multilingual text-to-speech on the GPU (ROCm). Opt-in; a large download (about 10 GB)."
+family = "qwen3tts"
+backends = ["rocm"]
+tier = "optional"
+
+[image]
+package = "ghcr.io/hal0ai/hal0-runner-qwen3tts"
+version = "0.1.1"
+
+[source]
+kind = "pypi"
+package = "qwen-tts"
+version = "0.1.1"
+repo = "https://github.com/Qwen/Qwen3-TTS"
+
+[build]
+heavy = true
+timeout_minutes = 90
+
+[build.args]
+#: rocm/pytorch:rocm7.2.4_ubuntu24.04_py3.12_pytorch_release_2.10.0, the
+#: exact base layers of the image hal0 shipped.
+ROCM_PYTORCH = "docker.io/rocm/pytorch:rocm7.2.4_ubuntu24.04_py3.12_pytorch_release_2.10.0@sha256:4449f856653602317e4101a76fce599c7fcd58ccec2e539951fce5f73083179e"
+
+[verification]
+boxes = ["the Strix Halo box (kfd present)"]
+probes = [
+    "the build's `pip check` and ROCm torch assertion pass (part of the Containerfile)",
+    "with Qwen3-TTS-12Hz-1.7B-CustomVoice mounted, the server loads on the GPU",
+    "POST /v1/audio/speech in two languages returns playable audio",
+]
+
+[lifecycle]
+purpose = "Optional higher-quality multilingual voice on the GPU."
+needed_for = ["Qwen3-TTS-12Hz-1.7B-CustomVoice slots"]
+retire_when = "When hal0 drops the Qwen3 TTS runtime."
+
+[lifecycle.track]
+kind = "pypi"
