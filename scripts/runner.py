@@ -12,8 +12,9 @@ stdlib only. Every runner is built the same way, from its manifest.toml:
     python3 scripts/runner.py build <key> --check     # stage only: source + patches, no build
 
 The tag is `<image.version>-r<sha7>`, where sha7 is the last commit that
-touched runners/<key>/ or the shared pin file it uses (runners/llama.cpp.toml
-for standard and cpu, whose [source].pin names it). An unchanged recipe therefore always maps to the
+touched runners/<key>/, the shared pin file it uses (runners/llama.cpp.toml
+for standard and cpu, whose [source].pin names it) or the build driver
+(this file, BUILD_DRIVER). An unchanged recipe therefore always maps to the
 same tag, and a published tag is never pushed again. Computing it needs the
 full git history (actions/checkout with fetch-depth: 0).
 
@@ -142,9 +143,19 @@ def validate(key: str, doc: dict) -> list[str]:
     return out
 
 
+#: Files outside runners/ that decide what goes into every image: this build
+#: driver stages the context, applies patches and sets build args and labels.
+#: They count toward every runner's recipe revision, so changing the build
+#: logic gives every runner a new tag instead of reusing ("tag exists") one
+#: built by the old logic. runner.py imports no other local module; add any
+#: shared build helper it starts using here.
+BUILD_DRIVER = ("scripts/runner.py",)
+
+
 def recipe_paths(key: str) -> list[str]:
-    """The paths a runner's build depends on: its directory plus any shared pin file."""
-    paths = [f"runners/{key}"]
+    """The paths a runner's build depends on: its directory, any shared pin
+    file, and the build driver (BUILD_DRIVER)."""
+    paths = [f"runners/{key}", *BUILD_DRIVER]
     pin = tomllib.loads((RUNNERS / key / "manifest.toml").read_text()).get("source", {}).get("pin")
     if pin:
         paths.append(f"runners/{pin}")
@@ -152,7 +163,7 @@ def recipe_paths(key: str) -> list[str]:
 
 
 def recipe_commit(key: str) -> tuple[str, bool]:
-    """(last commit touching the recipe or its shared pin, uncommitted changes there)."""
+    """(last commit touching recipe_paths(key), uncommitted changes there)."""
     rel = recipe_paths(key)
     sha = subprocess.run(["git", "log", "-1", "--format=%H", "--", *rel], cwd=ROOT,
                          capture_output=True, text=True).stdout.strip()
