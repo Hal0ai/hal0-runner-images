@@ -24,8 +24,7 @@ newest-N are NOT deleted, only reported. Automated deletion of aged
 releases is a follow-up once we have more confidence in the classifier.
 
 stdlib only (urllib/json/argparse/datetime/re/os/sys) — no pip installs
-in this workflow, on purpose (see pin-digests.yml's BUILD-FREE philosophy:
-keep the fast/frequent ops dependency-free).
+in this workflow, on purpose: keep the fast, frequent operations dependency-free.
 
 Usage:
     GH_TOKEN=... python3 scripts/retention.py                  # dry-run (default)
@@ -140,9 +139,15 @@ def package_name_from_ref(image: str) -> str:
 
 
 def build_images_index(images_doc: dict) -> dict:
-    """package name -> {"tags": set(...), "digests": set(...)} from images.json."""
+    """package name -> {"tags": set(...), "digests": set(...)} from images.json.
+
+    images.json is schema hal0.runner-images.v2: a `runners` array whose
+    entries carry `image`, `tag` and `digest` (tag/digest are null until a
+    build is gated). External images (not under ghcr.io/hal0ai) are indexed
+    too; the sweep only ever lists hal0-* packages, so they never match.
+    """
     index: dict[str, dict[str, set]] = {}
-    for entry in images_doc.get("images", []):
+    for entry in images_doc.get("runners", []):
         image = entry.get("image")
         if not image:
             continue

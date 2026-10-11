@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
-"""Static consistency checks for the tracked recipes and registries.
+"""Static consistency checks for the runner recipes and the catalogue.
 
-stdlib only, NOT pytest, same as test_retention_fixtures.py:
+stdlib only, not pytest, same as the other scripts/test_*.py:
 
     python3 scripts/test_repo_consistency.py
 
-Checks that need no network and no container runtime:
-  * images.json keeps the hal0.runner-images.v1 shape hal0's sync parses
-    (src/hal0/registry/runner_image_sync.py) and RuntimeFamily vocabulary
-    (src/hal0/runners/__init__.py).
-  * build-recipes.json llama_ref == each Dockerfile's ARG LLAMA_REF default,
-    and no recipe clones a moving branch.
-  * runners/* manifests parse; the llama-server recipes FROM the consumed
-    strix base digest; shared build.sh/entrypoint.sh symlinks are intact.
-  * retention-allowlist.json refs parse.
-  * no private LAN addresses in tracked text files.
+No network, no container runtime. Checks:
+  * images.json is schema hal0.runner-images.v2 (docs/SCHEMA.md), with no
+    unknown fields, and every recipe has exactly one matching entry;
+  * every runners/<key>/manifest.toml passes scripts/runner.py's validation
+    and carries [verification] and [lifecycle] (with a release-aware track);
+  * every Containerfile takes its base images from manifest build args pinned
+    by digest, declares no pin defaults of its own, and clones no branch;
+  * Python dependency files pin exact versions;
+  * runners/cpu and runners/standard pin the same llama.cpp release, and the
+    external cuda entry does not run ahead of it;
+  * no retired names or in-image paths in the recipes, scripts or catalogue;
+  * retention-allowlist.json refs parse; no private LAN addresses anywhere.
 """
 
 from __future__ import annotations
@@ -29,16 +31,25 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import runner  # noqa: E402
 from retention import parse_allowlist_ref  # noqa: E402
 
-# Mirror of hal0 src/hal0/runners/__init__.py RuntimeFamily.
-RUNTIME_FAMILIES = {"llama-server", "flm", "kokoro", "qwen3tts", "moonshine", "comfyui"}
-# CUDA is out of scope for hal0 runner images.
-BACKENDS = {"rocm", "vulkan", "cpu", "npu"}
-PUBLISH = {"ci", "external", "manual"}
-OWNERSHIP = {"owned", "referenced"}
-SHA40 = re.compile(r"^[0-9a-f]{40}$")
+#: Mirror of hal0 src/hal0/runners/__init__.py RuntimeFamily.
+FAMILIES = {"llama-server", "flm", "kokoro", "qwen3tts", "moonshine", "comfyui"}
+BACKENDS = {"rocm", "vulkan", "cpu", "npu", "cuda"}
+TIERS = {"default", "optional"}
+ENTRY_FIELDS = ["id", "title", "summary", "image", "tag", "digest", "backends", "family", "tier",
+                "recipe", "maintainer_notes"]
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
+PINNED_IMAGE = re.compile(r"^[A-Za-z0-9._\-/:]+@sha256:[0-9a-f]{64}$")
+TRACK_KINDS = {"github-release", "pypi"}
+#: Build args every recipe gets from scripts/runner.py itself.
+TOOL_ARGS = {"CMAKE_FLAGS", "JOBS"}
+#: Names of the retired runner system. None of them may come back in the
+#: recipes, the scripts or the catalogue (retention-allowlist.json and the
+#: docs' history notes are the only places they are still named).
+RETIRED = ["hal0-combined", "hal0-toolbox-", "rocmfpx", "strix-vulkan", "promptforge",
+           "hal0-strix-base", "llama-vulkan", "/opt/rocmfpx", "/opt/llama-vulkan"]
 
 failures: list[str] = []
 
@@ -48,141 +59,214 @@ def check(cond: bool, msg: str) -> None:
         failures.append(msg)
 
 
-def load_json(name: str) -> dict:
-    return json.loads((ROOT / name).read_text())
+def manifests() -> dict[str, dict]:
+    return {k: tomllib.loads((ROOT / "runners" / k / "manifest.toml").read_text()) for k in runner.keys()}
 
 
-def test_images_json() -> None:
-    doc = load_json("images.json")
-    check(doc.get("schema") == "hal0.runner-images.v1", "images.json: schema string changed")
-    images = doc.get("images")
-    check(isinstance(images, list), "images.json: images must be an array")
+def catalogue() -> dict:
+    return json.loads((ROOT / "images.json").read_text())
+
+
+def test_catalogue_shape() -> None:
+    doc = catalogue()
+    check(list(doc) == ["schema", "runners"], f"images.json: top-level keys must be schema, runners; got {list(doc)}")
+    check(doc.get("schema") == "hal0.runner-images.v2", "images.json: schema must be hal0.runner-images.v2")
+    entries = doc.get("runners")
+    check(isinstance(entries, list) and entries, "images.json: runners must be a non-empty array")
     seen: set[str] = set()
-    for e in images or []:
-        i = e.get("id")
-        check(isinstance(i, str) and i, f"images.json: entry without id: {e}")
+    for e in entries or []:
+        i = e.get("id", "?")
+        check(list(e) == ENTRY_FIELDS, f"images.json[{i}]: fields must be exactly {ENTRY_FIELDS}, got {list(e)}")
+        check(isinstance(i, str) and runner.KEY.match(i) is not None, f"images.json[{i}]: id must be a runner key")
         check(i not in seen, f"images.json: duplicate id {i}")
         seen.add(i)
-        check(isinstance(e.get("image"), str) and e["image"].startswith("ghcr.io/hal0ai/"),
-              f"images.json[{i}]: image must be a ghcr.io/hal0ai ref")
-        check(e.get("runtime_family") in RUNTIME_FAMILIES,
-              f"images.json[{i}]: runtime_family {e.get('runtime_family')!r} not in hal0 RuntimeFamily")
-        b = e.get("supported_backends")
-        check(isinstance(b, list) and b and set(b) <= BACKENDS,
-              f"images.json[{i}]: supported_backends {b!r} invalid")
-        check(e.get("publish") in PUBLISH, f"images.json[{i}]: publish invalid")
-        check(e.get("ownership") in OWNERSHIP, f"images.json[{i}]: ownership invalid")
-        if "digest" in e:
-            check(bool(DIGEST.match(e["digest"])), f"images.json[{i}]: malformed digest")
-        if e.get("publish") == "ci":
-            bd = e.get("build") or {}
-            for k in ("context", "dockerfile"):
-                check(bool(bd.get(k)) and (ROOT / bd[k]).exists(),
-                      f"images.json[{i}]: publish=ci needs an existing build.{k}")
-        for k in ("recipe",):
-            ref = (e.get("build") or {}).get(k)
-            if ref:
-                check((ROOT / ref).exists(), f"images.json[{i}]: build.{k} {ref} missing")
+        for f in ("title", "summary", "image", "maintainer_notes"):
+            check(isinstance(e.get(f), str) and e[f].strip() != "", f"images.json[{i}]: {f} must be a non-empty string")
+        check("\n" not in e.get("summary", ""), f"images.json[{i}]: summary must be one line")
+        check(e.get("family") in FAMILIES, f"images.json[{i}]: family {e.get('family')!r} not a hal0 RuntimeFamily")
+        check(e.get("tier") in TIERS, f"images.json[{i}]: tier must be one of {sorted(TIERS)}")
+        b = e.get("backends")
+        check(isinstance(b, list) and b and set(b) <= BACKENDS, f"images.json[{i}]: backends {b!r} invalid")
+        tag, digest = e.get("tag"), e.get("digest")
+        check(tag is None or (isinstance(tag, str) and tag and ":" not in tag),
+              f"images.json[{i}]: tag must be null or a bare tag")
+        check(digest is None or (isinstance(digest, str) and DIGEST.match(digest) is not None),
+              f"images.json[{i}]: digest must be null or sha256:<64 hex>")
+        check(digest is None or tag is not None, f"images.json[{i}]: a digest needs its tag")
+        rec = e.get("recipe")
+        if rec is None:
+            check(not e["image"].startswith(runner.PACKAGE_PREFIX),
+                  f"images.json[{i}]: an external entry (recipe null) cannot use a hal0-runner package")
+        else:
+            check(rec == f"runners/{i}" and (ROOT / rec / "manifest.toml").is_file(),
+                  f"images.json[{i}]: recipe must be runners/{i} and exist")
+            check(e["image"] == runner.PACKAGE_PREFIX + i, f"images.json[{i}]: image must be {runner.PACKAGE_PREFIX}{i}")
+            if tag is not None:
+                check(re.match(r"^[A-Za-z0-9._]+-r[0-9a-f]{7}$", tag) is not None,
+                      f"images.json[{i}]: a built tag is <version>-r<sha7>, got {tag!r}")
 
 
-def test_build_recipes() -> None:
-    doc = load_json("build-recipes.json")
-    check(doc.get("schema") == "hal0.build-recipes.v1", "build-recipes.json: schema string")
-    img_ids = {e["id"] for e in load_json("images.json")["images"]}
-    for r in doc.get("recipes", []):
-        i = r["id"]
-        check(i not in img_ids, f"build-recipes.json[{i}]: id collides with images.json")
-        check(r["image"].startswith("ghcr.io/hal0ai/hal0-"),
-              f"build-recipes.json[{i}]: must push to a hal0-* package (never the fork's)")
-        check(bool(SHA40.match(r["llama_ref"])), f"build-recipes.json[{i}]: llama_ref must be a full SHA")
-        df = (ROOT / r["dockerfile"]).read_text()
-        m = re.search(r"^ARG LLAMA_REF=(\S+)$", df, re.M)
-        check(bool(m) and m.group(1) == r["llama_ref"],
-              f"{r['dockerfile']}: ARG LLAMA_REF default != build-recipes.json llama_ref")
-        m = re.search(r"^ARG REPO=(\S+)$", df, re.M)
-        check(bool(m) and m.group(1) == r["llama_repo"],
-              f"{r['dockerfile']}: ARG REPO != build-recipes.json llama_repo")
-        check("ARG BRANCH" not in df and not re.search(r"git clone[^\n]*\s-b\s", df),
-              f"{r['dockerfile']}: clones a branch; pin a SHA")
-        for f in re.findall(r"^COPY (?!--from)(\S+) ", df, re.M):
-            check((ROOT / r["context"] / f).exists(), f"{r['dockerfile']}: COPY source {f} missing")
+def test_catalogue_matches_recipes() -> None:
+    entries = {e["id"]: e for e in catalogue()["runners"]}
+    for key, doc in manifests().items():
+        e = entries.get(key)
+        check(e is not None, f"runners/{key}: no images.json entry")
+        if e is None:
+            continue
+        r = doc["runner"]
+        for field, want in (("title", r["title"]), ("summary", r["summary"]), ("backends", r["backends"]),
+                            ("family", r["family"]), ("tier", r["tier"]), ("image", doc["image"]["package"])):
+            check(e[field] == want, f"images.json[{key}].{field} != runners/{key}/manifest.toml ({e[field]!r} vs {want!r})")
+        if e["tag"] is not None:
+            check(e["tag"].startswith(doc["image"]["version"] + "-r"),
+                  f"images.json[{key}].tag {e['tag']!r} is not a build of version {doc['image']['version']}")
 
 
-def test_runners() -> None:
-    base = next(r for r in load_json("build-recipes.json")["recipes"] if r["id"] == "strix-base")
-    base_img, base_digest = base["consumed_ref"].split("@")
-    base_img = base_img.rsplit(":", 1)[0]
-    for d in ("rocmfpx", "upstream", "strix", "promptforge"):
-        rdir = ROOT / "runners" / d
-        doc = tomllib.loads((rdir / "manifest.toml").read_text())
-        check(bool(SHA40.match(doc["source"]["ref"])), f"runners/{d}: source.ref not a full SHA")
-        check(bool(DIGEST.match(doc["base"]["digest"])), f"runners/{d}: base.digest malformed")
-        check("CANONICAL HOME" in (rdir / "manifest.toml").read_text()[:400],
-              f"runners/{d}: missing canonical-home note")
-        for p in doc.get("patches", []):
-            check((rdir / "patches" / p["file"]).is_file(), f"runners/{d}: patch {p['file']} missing")
-        if d != "promptforge":
-            check(doc["base"]["image"].startswith(base_img) and doc["base"]["digest"] == base_digest,
-                  f"runners/{d}: [base] must stay on the consumed strix base digest")
-    for d in ("upstream", "strix"):
-        for f in ("build.sh", "entrypoint.sh"):
-            p = ROOT / "runners" / d / f
-            check(p.is_symlink() and p.resolve() == (ROOT / "runners" / "rocmfpx" / f).resolve(),
-                  f"runners/{d}/{f}: must symlink to ../rocmfpx/{f}")
-
-
-#: images.json entries whose `tag` a CI build may move. Every other publish:ci
-#: image gets only an immutable `<tag>-r<commit>` tag (build-matrix.yml), so a
-#: build can never change what a hal0 install pulls by tag.
-MOVING_TAG_ALLOWED = {"comfyui"}
-
-
-def test_moving_tags() -> None:
-    for e in load_json("images.json")["images"]:
-        mt = e.get("moving_tag", False)
-        check(isinstance(mt, bool), f"images.json {e['id']}: moving_tag must be a bool")
-        if mt:
-            check(e["id"] in MOVING_TAG_ALLOWED,
-                  f"images.json {e['id']}: moving_tag would let CI move a tag hal0 pulls; "
-                  "move it through a bump (docs/BUMPING.md) instead")
-
-def test_lifecycle() -> None:
-    """Every runner says why it exists, when it retires, and what to watch."""
-    for d in ("rocmfpx", "upstream", "strix", "promptforge"):
-        doc = tomllib.loads((ROOT / "runners" / d / "manifest.toml").read_text())
+def test_manifests() -> None:
+    for key, doc in manifests().items():
+        for p in runner.validate(key, doc):
+            failures.append(f"runners/{key}: {p}")
+        check(doc["runner"]["family"] in FAMILIES, f"runners/{key}: family not a hal0 RuntimeFamily")
+        check(doc["runner"]["tier"] in TIERS, f"runners/{key}: tier invalid")
+        check(set(doc["runner"]["backends"]) <= BACKENDS, f"runners/{key}: backends invalid")
+        probes = doc.get("verification", {}).get("probes")
+        check(isinstance(probes, list) and len(probes) > 0, f"runners/{key}: [verification].probes must list the gate")
         life = doc.get("lifecycle", {})
-        for key in ("purpose", "retire_when", "track_ref"):
-            check(isinstance(life.get(key), str) and life[key].strip() != "",
-                  f"runners/{d}: [lifecycle].{key} missing or empty")
-        check(isinstance(life.get("needed_for"), list) and len(life["needed_for"]) > 0,
-              f"runners/{d}: [lifecycle].needed_for must list at least one model or feature")
-        check(str(life.get("track_ref", "")).startswith("refs/heads/"),
-              f"runners/{d}: [lifecycle].track_ref must be a refs/heads/ branch")
-        img = doc.get("ci", {}).get("image", "")
-        check(img == f"ghcr.io/hal0ai/hal0-runner-{d}",
-              f"runners/{d}: [ci].image must be ghcr.io/hal0ai/hal0-runner-{d}, got {img!r}")
-        check(img.rsplit("/", 1)[-1] != doc["image"]["tag"].split(":")[0].rsplit("/", 1)[-1],
-              f"runners/{d}: [ci].image must not be the consumed package")
-        flags = doc["build"]["cmake_flags"]
-        check("-DGGML_NATIVE=OFF" in flags and "-DGGML_NATIVE=ON" not in flags,
-              f"runners/{d}: set -DGGML_NATIVE=OFF and name the ISA; ggml defaults to -march=native, "
-              "which ties the CPU code to the build machine (#2126)")
-    for r in load_json("build-recipes.json")["recipes"]:
-        check(str(r.get("track_ref", "")).startswith("refs/heads/"),
-              f"build-recipes.json {r['id']}: track_ref must be a refs/heads/ branch")
+        for f in ("purpose", "retire_when"):
+            check(isinstance(life.get(f), str) and life[f].strip() != "", f"runners/{key}: [lifecycle].{f} missing")
+        check(isinstance(life.get("needed_for"), list) and life["needed_for"],
+              f"runners/{key}: [lifecycle].needed_for must name at least one model or feature")
+        track = life.get("track", {})
+        kind = track.get("kind")
+        check(kind in TRACK_KINDS, f"runners/{key}: [lifecycle.track].kind must be one of {sorted(TRACK_KINDS)}")
+        src_kind = doc["source"].get("kind", "git")
+        if kind == "github-release":
+            check(src_kind == "git", f"runners/{key}: a github-release track needs a git source")
+            check(bool(track.get("pattern")), f"runners/{key}: github-release track needs a tag pattern")
+            rel = doc["source"].get("release")
+            if rel:
+                check(re.match(track.get("pattern", "$^"), rel) is not None,
+                      f"runners/{key}: [source].release {rel!r} does not match the track pattern")
+        if kind == "pypi":
+            check(src_kind == "pypi", f"runners/{key}: a pypi track needs a pypi source")
+            check(doc["image"]["version"] == doc["source"].get("version"),
+                  f"runners/{key}: [image].version must equal the pinned PyPI version")
+        flags = doc.get("build", {}).get("cmake_flags")
+        if flags is not None:
+            check("-DGGML_NATIVE=OFF" in flags and "-DGGML_NATIVE=ON" not in flags,
+                  f"runners/{key}: set -DGGML_NATIVE=OFF; ggml otherwise builds for the build machine's CPU (hal0 #2126)")
+            check("-DLLAMA_BUILD_UI=OFF" in flags and "-DLLAMA_USE_PREBUILT_UI=OFF" in flags,
+                  f"runners/{key}: turn the web UI off with upstream's current option names")
+
+
+def containerfile_args(text: str) -> tuple[dict[str, str | None], list[str]]:
+    """ARG name -> default (None when it has none), and every FROM operand."""
+    args: dict[str, str | None] = {}
+    for m in re.finditer(r"^ARG\s+([A-Za-z_][A-Za-z0-9_]*)(?:=(\S*))?\s*$", text, re.M):
+        args.setdefault(m.group(1), m.group(2))
+    froms = re.findall(r"^FROM\s+(\S+)", text, re.M)
+    return args, froms
+
+
+def test_containerfiles() -> None:
+    for key, doc in manifests().items():
+        rdir = ROOT / "runners" / key
+        text = (rdir / doc["image"].get("containerfile", "Containerfile")).read_text()
+        args, froms = containerfile_args(text)
+        bargs = doc.get("build", {}).get("args", {})
+        stages = set(re.findall(r"^FROM\s+\S+\s+AS\s+(\S+)", text, re.M | re.I))
+        for f in froms:
+            m = re.fullmatch(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", f)
+            if m:
+                name = m.group(1)
+                check(name in bargs and PINNED_IMAGE.match(bargs[name]) is not None,
+                      f"runners/{key}: FROM ${{{name}}} must come from [build.args] pinned as image@sha256:<digest>")
+            else:
+                check(f in stages, f"runners/{key}: FROM {f} must be a build arg pinned by digest, not a literal image")
+        for name in bargs:
+            check(name in args, f"runners/{key}: [build.args].{name} is not declared as an ARG in the Containerfile")
+        for name, default in args.items():
+            if name in bargs:
+                check(default is None, f"runners/{key}: ARG {name} has a default; manifest.toml is the only place a pin lives")
+            elif name not in TOOL_ARGS and name != "DEBIAN_FRONTEND":
+                failures.append(f"runners/{key}: ARG {name} is not set by manifest.toml [build.args]")
+        if doc.get("build", {}).get("cmake_flags"):
+            check("CMAKE_FLAGS" in args, f"runners/{key}: cmake_flags set but the Containerfile has no ARG CMAKE_FLAGS")
+        check(not re.search(r"git clone[^\n]*\s(-b|--branch)\s", text), f"runners/{key}: clones a branch; pin a commit")
+        for name, val in bargs.items():
+            check(val not in ("main", "master", "latest", "HEAD"), f"runners/{key}: [build.args].{name} is a moving ref")
+        for src in re.findall(r"^COPY\s+(?!--from)(\S+)\s", text, re.M):
+            if src.rstrip("/") == "src" and doc["source"].get("checkout"):
+                continue
+            check((rdir / src).exists(), f"runners/{key}: COPY source {src} missing from runners/{key}/")
+
+
+def test_python_pins() -> None:
+    pin = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-]*(\[[A-Za-z0-9,_\-]+\])?==[A-Za-z0-9.+!_\-]+$")
+    for f in sorted((ROOT / "runners").glob("*/requirements.txt")) + sorted((ROOT / "runners").glob("*/constraints.txt")):
+        names = []
+        for n, line in enumerate(f.read_text().splitlines(), 1):
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            check(pin.match(line) is not None, f"{f.relative_to(ROOT)}:{n}: {line!r} is not an exact name==version pin")
+            names.append(line.split("==")[0].lower())
+        check(len(names) == len(set(names)), f"{f.relative_to(ROOT)}: duplicate package")
+
+
+def test_llama_release() -> None:
+    m = manifests()
+    std, cpu = m["standard"], m["cpu"]
+    check(cpu["source"]["ref"] == std["source"]["ref"] and cpu["image"]["version"] == std["image"]["version"],
+          "runners/cpu must pin the same llama.cpp release and commit as runners/standard")
+    check(std["image"]["version"] == std["source"]["release"], "runners/standard: [image].version must be the release")
+    cuda = next((e for e in catalogue()["runners"] if e["id"] == "cuda"), None)
+    if cuda is not None:
+        mt = re.fullmatch(r"server-cuda-b([0-9]+)", cuda["tag"] or "")
+        check(mt is not None, "images.json[cuda]: tag must be ggml-org's server-cuda-b<release>")
+        if mt:
+            check(int(mt.group(1)) <= int(std["image"]["version"].lstrip("b")),
+                  "images.json[cuda]: the CUDA image must not be newer than runners/standard's release")
+
+
+def test_standard_entrypoint() -> None:
+    text = (ROOT / "runners" / "standard" / "entrypoint.sh").read_text()
+    check('SERVER="${HAL0_RUNNER_SERVER:-/opt/hal0/bin/llama-server}"' in text,
+          "runners/standard/entrypoint.sh: server must default to /opt/hal0/bin/llama-server")
+    check('set -- "$@" --port "$port"' in text,
+          "runners/standard/entrypoint.sh: must pass --port when the caller did not (upstream default is 9931)")
+    cf = (ROOT / "runners" / "standard" / "Containerfile").read_text()
+    check('ENTRYPOINT ["/opt/hal0/entrypoint.sh"]' in cf, "runners/standard: ENTRYPOINT must be /opt/hal0/entrypoint.sh")
+
+
+def tracked_files() -> list[str]:
+    return subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.split()
+
+
+def test_no_retired_names() -> None:
+    me = Path(__file__).relative_to(ROOT).as_posix()
+    for f in tracked_files():
+        if not (f.startswith(("runners/", "scripts/")) or f == "images.json") or f == me:
+            continue
+        p = ROOT / f
+        if not p.is_file() or "/patches/" in f:
+            continue
+        text = p.read_text(errors="replace")
+        for name in RETIRED:
+            # retention.py's fixtures and docstrings legitimately name old packages.
+            if name in text and not f.startswith("scripts/test_retention") and f != "scripts/retention.py":
+                failures.append(f"{f}: mentions retired {name!r}")
 
 
 def test_allowlist() -> None:
-    doc = load_json("retention-allowlist.json")
+    doc = json.loads((ROOT / "retention-allowlist.json").read_text())
     for ref in doc.get("hal0_code_pins", []) + doc.get("evidence", {}).get("refs", []):
         parse_allowlist_ref(ref)  # raises SystemExit on a malformed ref
 
 
 def test_no_lan_addresses() -> None:
     lan = re.compile(r"\b(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})\b")
-    files = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True,
-                           check=True).stdout.split()
-    for f in files:
+    for f in tracked_files():
         p = ROOT / f
         if p.is_symlink() or not p.is_file() or "/patches/" in f:
             continue
@@ -195,9 +279,9 @@ def test_no_lan_addresses() -> None:
 
 
 def main() -> int:
-    for t in (test_images_json, test_build_recipes, test_runners, test_lifecycle, test_moving_tags,
-              test_allowlist,
-              test_no_lan_addresses):
+    for t in (test_catalogue_shape, test_catalogue_matches_recipes, test_manifests, test_containerfiles,
+              test_python_pins, test_llama_release, test_standard_entrypoint, test_no_retired_names,
+              test_allowlist, test_no_lan_addresses):
         before = len(failures)
         t()
         print(f"{'FAIL' if len(failures) > before else 'ok  '} {t.__name__}")

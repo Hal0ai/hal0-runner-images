@@ -87,7 +87,7 @@ def check_raises(name, fn, *args, **kwargs):
 # ---------------------------------------------------------------------------
 
 images_doc = {
-    "images": [
+    "runners": [
         {"image": "ghcr.io/hal0ai/hal0-toolbox-cpu", "tag": "v1"},
     ]
 }
@@ -110,7 +110,7 @@ allow_doc = {
     "evidence": {"refs": ["ghcr.io/hal0ai/hal0-rocmfpx:c077206"]},
 }
 allowlist_index2 = build_allowlist_index(allow_doc)
-empty_images_index = build_images_index({"images": []})
+empty_images_index = build_images_index({"runners": []})
 
 versions = [
     v(1, "sha256:" + "b" * 64, ["0826"], age_days=400),
@@ -180,7 +180,7 @@ versions = [
     v(1, subject_digest, ["v1"], age_days=400),  # kept via images.json
     v(2, "sha256:" + "0" * 64, [f"sha256-{subject_digest_hex}.sig"], age_days=400),
 ]
-images_index3 = build_images_index({"images": [{"image": "ghcr.io/hal0ai/hal0-signed", "tag": "v1"}]})
+images_index3 = build_images_index({"runners": [{"image": "ghcr.io/hal0ai/hal0-signed", "tag": "v1"}]})
 results = classify_package("hal0-signed", versions, images_index3, allowlist_index2, now=NOW)
 check("cosign sig with kept subject -> subject kept", results, 1, "keep", "images.json")
 check("cosign sig with kept subject -> cosign kept too", results, 2, "keep", "subject")
@@ -315,7 +315,7 @@ check(
 # ---------------------------------------------------------------------------
 
 images_index_digest_only = build_images_index(
-    {"images": [{"image": "ghcr.io/hal0ai/hal0-digestwins", "tag": "v9", "digest": "sha256:" + "7" * 64}]}
+    {"runners": [{"image": "ghcr.io/hal0ai/hal0-digestwins", "tag": "v9", "digest": "sha256:" + "7" * 64}]}
 )
 versions = [
     v(1, "sha256:" + "7" * 64, ["random-tag-a", "random-tag-b"], age_days=400),
