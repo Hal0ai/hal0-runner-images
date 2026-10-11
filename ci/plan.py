@@ -5,9 +5,12 @@
     python3 ci/plan.py --select standard,cpu         # workflow_dispatch
     python3 ci/plan.py --select all
 
-A runner is selected when a changed path is under runners/<key>/. A changed file
-directly under runners/ (runners/llama.cpp.toml, the shared llama.cpp pin) selects
-the runners whose manifest.toml names it (`pin = "llama.cpp.toml"`). A base that is empty, all
+A runner is selected when a changed path is one of its recipe paths: its
+runners/<key>/ directory, the shared pin file its manifest names
+(`[source] pin = "llama.cpp.toml"`) and the build driver (scripts/runner.py),
+because the image tag's sha7 counts commits to all three. The list comes from
+`scripts/runner.py recipe_paths(key)`, so the two cannot drift; a runner.py that
+predates that function gets the same list built here. A base that is empty, all
 zeros or unknown to git selects every runner: fail wide, never build nothing by
 accident. The matrix itself (image, tag, heavy, timeout) comes from
 `scripts/runner.py list`, so the recipes side stays the one authority.
@@ -18,9 +21,11 @@ Outputs (GITHUB_OUTPUT): matrix, has_runners, runners.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 from typing import Callable
 
@@ -45,22 +50,39 @@ def changed_files(base: str, head: str, root: Path = lib.ROOT) -> list[str] | No
     return [p for p in proc.stdout.splitlines() if p]
 
 
-def names_file(key: str, name: str, root: Path = lib.ROOT) -> bool:
+def _runner_module(root: Path):
+    path = root / "scripts" / "runner.py"
+    if not path.is_file():
+        return None
+    spec = importlib.util.spec_from_file_location("hal0_runner_build", path)
+    mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    return mod
+
+
+def recipe_paths(key: str, root: Path = lib.ROOT) -> list[str]:
+    """Repo-relative paths a runner's build depends on (files or directories)."""
+    mod = _runner_module(root)
+    if mod is not None and hasattr(mod, "recipe_paths"):
+        return list(mod.recipe_paths(key))
+    paths = [f"runners/{key}", "scripts/runner.py"]  # same list, for a runner.py without recipe_paths
     manifest = root / "runners" / key / "manifest.toml"
-    return manifest.is_file() and name in manifest.read_text(errors="ignore")
+    pin = (tomllib.loads(manifest.read_text()).get("source") or {}).get("pin") if manifest.is_file() else None
+    return paths + ([f"runners/{pin}"] if pin else [])
 
 
-def select_changed(keys: list[str], files: list[str] | None, root: Path = lib.ROOT) -> list[str]:
+def touches(path: str, changed: str) -> bool:
+    return changed == path or changed.startswith(path.rstrip("/") + "/")
+
+
+def select_changed(
+    keys: list[str], files: list[str] | None, root: Path = lib.ROOT,
+    paths_for: Callable[[str], list[str]] | None = None,
+) -> list[str]:
     if files is None:
         return list(keys)
-    hit: set[str] = set()
-    for f in files:
-        parts = f.split("/")
-        if len(parts) >= 3 and parts[0] == "runners" and parts[1] in keys:
-            hit.add(parts[1])
-        elif len(parts) == 2 and parts[0] == "runners" and parts[1].endswith(".toml"):
-            hit.update(k for k in keys if names_file(k, parts[1], root))
-    return sorted(hit)
+    paths_for = paths_for or (lambda k: recipe_paths(k, root))
+    return sorted(k for k in keys if any(touches(p, f) for p in paths_for(k) for f in files))
 
 
 def select_explicit(keys: list[str], select: str) -> list[str]:

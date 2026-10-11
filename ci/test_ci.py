@@ -87,12 +87,27 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(plan.select_changed(keys, ["runners/llama.cpp.toml"], self.root), ["cpu", "standard"])
         self.assertEqual(plan.select_changed(keys, ["runners/other.toml"], self.root), [])
 
+    def test_the_build_driver_selects_every_runner(self):
+        keys = lib.runner_keys(self.root)
+        self.assertEqual(plan.select_changed(keys, ["scripts/runner.py"], self.root), keys)
+        self.assertEqual(plan.select_changed(keys, ["scripts/runner_other.py", "scripts/test_x.py"], self.root), [])
+
+    def test_recipe_paths_come_from_runner_py_when_it_has_them(self):
+        (self.root / "scripts").mkdir()
+        (self.root / "scripts" / "runner.py").write_text(
+            "def recipe_paths(key):\n    return [f'runners/{key}', 'scripts/helper.py']\n")
+        keys = lib.runner_keys(self.root)
+        self.assertEqual(plan.recipe_paths("cpu", self.root), ["runners/cpu", "scripts/helper.py"])
+        self.assertEqual(plan.select_changed(keys, ["scripts/helper.py"], self.root), keys)
+        self.assertEqual(plan.select_changed(keys, ["scripts/runner.py"], self.root), [])  # runner.py says it is not a dependency
+
     def test_path_filter(self):
         keys = lib.runner_keys(self.root)
-        self.assertEqual(plan.select_changed(keys, ["runners/cpu/manifest.toml", "README.md"]), ["cpu"])
-        self.assertEqual(plan.select_changed(keys, ["docs/UPDATING.md", "runners/README.md"]), [])
-        self.assertEqual(plan.select_changed(keys, ["runners/gone/Containerfile"]), [])
-        self.assertEqual(plan.select_changed(keys, ["runners/kokoro/x.py", "runners/cpu/a", "runners/cpu/b"]), ["cpu", "kokoro"])
+        self.assertEqual(plan.select_changed(keys, ["runners/cpu/manifest.toml", "README.md"], self.root), ["cpu"])
+        self.assertEqual(plan.select_changed(keys, ["docs/UPDATING.md", "runners/README.md"], self.root), [])
+        self.assertEqual(plan.select_changed(keys, ["runners/gone/Containerfile"], self.root), [])
+        self.assertEqual(plan.select_changed(keys, ["runners/kokoro/x.py", "runners/cpu/a", "runners/cpu/b"], self.root), ["cpu", "kokoro"])
+        self.assertEqual(plan.select_changed(keys, ["runners/cpu2/a"], self.root), [])  # a sibling prefix is not the directory
 
     def test_unknown_diff_builds_everything(self):
         keys = lib.runner_keys(self.root)
