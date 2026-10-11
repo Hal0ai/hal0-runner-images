@@ -2,17 +2,20 @@ name: Build runner images
 
 # Builds the runners whose files changed (runners/<key>/**). See docs/UPDATING.md.
 #
-#   pull request   runners/<key>/build.sh --check (when the recipe has one), then
-#                  a push=false image build of each changed runner. Broken
-#                  bump = red PR.
-#   merge to main  the same, then push ghcr.io/hal0ai/hal0-runner-<key>:<version>-r<sha7>,
-#                  attest build provenance, and record tag + digest as a
-#                  CANDIDATE (artifact, job summary, commit comment).
+#   pull request   `scripts/runner.py build <key> --check`, then a push=false
+#                  image build of each changed runner. Broken bump = red PR.
+#   merge to main  the same, then push ghcr.io/hal0ai/hal0-runner-<key>:<version>-r<sha7>
+#                  (the tag scripts/runner.py computes), attest build
+#                  provenance, and record tag + digest as a CANDIDATE
+#                  (artifact, job summary, commit comment). A tag that already
+#                  exists means that recipe was already built: the leg is
+#                  skipped, never overwritten.
 #   dispatch       runners=<keys|all>; pushes only when run on main and push=true.
 #
-# A build never changes what hal0 pulls. There are no moving tags, an existing
-# tag is never overwritten, and images.json / hal0's pins move only through
-# promote.yml after the hardware gate.
+# A build never changes what hal0 pulls. There are no moving tags, and
+# images.json / hal0's pins move only through promote.yml after the hardware
+# gate. scripts/runner.py (recipes side) is the only thing that knows how to
+# build a runner; this file only runs it.
 #
 # There is no `paths:` filter on the trigger on purpose: a skipped or path-
 # filtered workflow leaves a required status check pending forever. The plan
@@ -79,18 +82,18 @@ jobs:
           set -euo pipefail
           case "$EVENT" in
             pull_request)
-              python3 ci/plan.py --sha "$PR_HEAD" --base "$PR_BASE" --head "$PR_HEAD" ;;
+              python3 ci/plan.py --base "$PR_BASE" --head "$PR_HEAD" ;;
             push)
-              python3 ci/plan.py --sha "$GITHUB_SHA" --base "$PUSH_BEFORE" --head "$GITHUB_SHA" ;;
+              python3 ci/plan.py --base "$PUSH_BEFORE" --head "$GITHUB_SHA" ;;
             workflow_dispatch)
-              python3 ci/plan.py --sha "$GITHUB_SHA" --select "$SELECT" ;;
+              python3 ci/plan.py --select "$SELECT" ;;
           esac
 
   build:
     needs: plan
     if: needs.plan.outputs.has_runners == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: ${{ matrix.timeout_minutes }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
@@ -100,22 +103,28 @@ jobs:
       id-token: write      # sigstore signing of the provenance attestation
       attestations: write
     env:
-      IMAGE: ${{ matrix.package }}
+      KEY: ${{ matrix.key }}
+      IMAGE: ${{ matrix.image }}
       TAG: ${{ matrix.tag }}
       PUBLISH: ${{ needs.plan.outputs.publish }}
+      HAL0_RUNNER_BUILD_DIR: ${{ github.workspace }}/../runner-build
     steps:
       - name: Free runner disk space
+        if: matrix.heavy
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /usr/local/share/boost
           docker system prune --all --force
           df -h /
 
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0   # runner.py tags from the last commit touching runners/<key>/
 
       # A hosted runner has 4 vCPUs and 16 GB. A ROCm + Vulkan llama.cpp build
       # ran out of memory (hipcc jobs, glslc fork) until swap was added and
       # overcommit allowed. CI runner only.
       - name: Add swap and allow overcommit
+        if: matrix.heavy
         run: |
           sudo sysctl -w vm.overcommit_memory=1
           sudo swapoff -a || true
@@ -125,12 +134,8 @@ jobs:
           sudo swapon /mnt/hal0-swap
           free -h
 
-      - name: Recipe check (patches apply, source reachable)
-        if: matrix.has_check
-        env:
-          KEY: ${{ matrix.key }}
-          HAL0_RUNNER_BUILD_DIR: ${{ runner.temp }}/runner-check
-        run: bash "runners/${KEY}/build.sh" --check
+      - name: Recipe check
+        run: python3 scripts/runner.py build "$KEY" --check
 
       - name: Log in to ghcr.io
         uses: docker/login-action@v3
@@ -139,62 +144,54 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: docker/setup-buildx-action@v3
-
-      # Tags are immutable. Only a definite "not found" counts as free: a
-      # network or auth error must stop the build, never allow an overwrite.
-      - name: Refuse to overwrite an existing tag
+      # Tags are immutable. Only a definite "not found" counts as free; a
+      # network or auth error must stop the job, never allow an overwrite.
+      # A tag that exists means this exact recipe commit was already built.
+      - name: Skip if the tag already exists
+        id: exists
         if: env.PUBLISH == 'true'
         run: |
           set -uo pipefail
-          out="$(docker buildx imagetools inspect "${IMAGE}:${TAG}" 2>&1)" && {
-            echo "::error::${IMAGE}:${TAG} already exists; tags are immutable. Commit a recipe change (new -r<sha7>) to build again."
-            exit 1
-          }
-          if grep -qiE 'not found|manifest unknown|name unknown|MANIFEST_UNKNOWN|NAME_UNKNOWN' <<<"$out"; then
+          if out="$(docker buildx imagetools inspect "${IMAGE}:${TAG}" 2>&1)"; then
+            echo "::notice::${IMAGE}:${TAG} already exists; tags are immutable, so this leg is skipped."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          elif grep -qiE 'not found|manifest unknown|name unknown|MANIFEST_UNKNOWN|NAME_UNKNOWN' <<<"$out"; then
             echo "${IMAGE}:${TAG} is free"
+            echo "exists=false" >> "$GITHUB_OUTPUT"
           else
             echo "::error::cannot tell whether ${IMAGE}:${TAG} exists: ${out}"
             exit 1
           fi
 
-      - name: Build and push
-        id: build
-        uses: docker/build-push-action@v6
-        with:
-          context: ${{ matrix.context }}
-          file: ${{ matrix.containerfile }}
-          push: ${{ env.PUBLISH == 'true' }}
-          tags: ${{ env.IMAGE }}:${{ env.TAG }}
-          # Overrides the title/version the Fedora base image leaks through.
-          # org.opencontainers.image.source / .revision stay with the recipe
-          # (they name the upstream source hal0 shows as provenance).
-          labels: |
-            org.opencontainers.image.title=${{ matrix.key }}
-            org.opencontainers.image.version=${{ env.TAG }}
-            dev.hal0.runner.key=${{ matrix.key }}
-            dev.hal0.recipe.revision=${{ github.sha }}
-            dev.hal0.recipe.repo=${{ github.server_url }}/${{ github.repository }}
-          cache-from: type=gha,scope=${{ matrix.key }}
-          cache-to: type=gha,mode=min,scope=${{ matrix.key }}
-          platforms: linux/amd64
-          provenance: false
-          sbom: false
+      - name: Build
+        if: steps.exists.outputs.exists != 'true'
+        run: |
+          set -euo pipefail
+          jobs=$(( $(nproc) / 2 )); (( jobs >= 1 )) || jobs=1
+          JOBS="$jobs" python3 scripts/runner.py build "$KEY" --tag "${IMAGE}:${TAG}"
+
+      - name: Push
+        id: push
+        if: env.PUBLISH == 'true' && steps.exists.outputs.exists != 'true'
+        run: |
+          set -euo pipefail
+          docker push "${IMAGE}:${TAG}"
+          digest="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "${IMAGE}:${TAG}" | grep "^${IMAGE}@" | head -n1 | cut -d@ -f2)"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no digest after push: '${digest}'"; exit 1; }
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
 
       - name: Attest build provenance
-        if: env.PUBLISH == 'true'
+        if: steps.push.outcome == 'success'
         uses: actions/attest-build-provenance@v4
         with:
           subject-name: ${{ env.IMAGE }}
-          subject-digest: ${{ steps.build.outputs.digest }}
+          subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
 
       - name: Record candidate
-        if: env.PUBLISH == 'true'
+        if: steps.push.outcome == 'success'
         env:
-          KEY: ${{ matrix.key }}
-          DIGEST: ${{ steps.build.outputs.digest }}
-          VERSION: ${{ matrix.version }}
+          DIGEST: ${{ steps.push.outputs.digest }}
         run: |
           set -euo pipefail
           mkdir -p candidate
@@ -203,14 +200,14 @@ jobs:
           e = os.environ
           print(json.dumps({
               "runner": e["KEY"], "image": e["IMAGE"], "tag": e["TAG"], "digest": e["DIGEST"],
-              "upstream_version": e["VERSION"], "commit": e["GITHUB_SHA"],
+              "commit": e["GITHUB_SHA"],
               "run": f'{e["GITHUB_SERVER_URL"]}/{e["GITHUB_REPOSITORY"]}/actions/runs/{e["GITHUB_RUN_ID"]}',
           }, indent=2))
           PY
           cat "candidate/${KEY}.json"
 
       - name: Upload candidate record
-        if: env.PUBLISH == 'true'
+        if: steps.push.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: candidate-${{ matrix.key }}
@@ -227,6 +224,7 @@ jobs:
       contents: write   # commit comments
     steps:
       - uses: actions/download-artifact@v4
+        continue-on-error: true   # every leg may have been skipped (tags exist)
         with:
           pattern: candidate-*
           merge-multiple: true
@@ -237,6 +235,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          compgen -G "candidate/*.json" >/dev/null || { echo "no new candidates"; exit 0; }
           python3 - <<'PY' > body.md
           import glob, json
           rows = [json.load(open(p)) for p in sorted(glob.glob("candidate/*.json"))]

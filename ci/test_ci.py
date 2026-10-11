@@ -26,15 +26,21 @@ OLD_SHA = "c35b66744f13cb0dcc476af063e112122eee9355"
 NEW_SHA = "a" * 40
 DIGEST = "sha256:" + "b" * 64
 
-MANIFEST = '''# recipe
-[source]
+PIN = '''# shared llama.cpp pin
+[llama_cpp]
 repo = "https://github.com/ggml-org/llama.cpp"
-version = "{version}"   # tag prefix
+version = "{version}"   # release tag
 ref = "{ref}"
 ref_description = "old words"
 
-[lifecycle]
+[other]
 ref = "must-not-change"
+'''
+MANIFEST = '''# recipe; pin lives in runners/llama.cpp.toml
+[source]
+repo = "https://github.com/ggml-org/llama.cpp"
+version = "{version}"
+ref = "{ref}"
 '''
 CONTAINERFILE = '''FROM scratch
 ARG LLAMA_VERSION={version}
@@ -44,47 +50,43 @@ RUN echo {ref}
 '''
 
 
-def make_tree(root: Path, runners: dict[str, dict]) -> None:
+def make_tree(root: Path, runners: dict[str, dict], pin: dict | None = None) -> None:
+    (root / "runners").mkdir(parents=True, exist_ok=True)
+    if pin is not None:
+        (root / "runners" / "llama.cpp.toml").write_text(PIN.format(**pin))
     for key, spec in runners.items():
         d = root / "runners" / key
         d.mkdir(parents=True)
-        (d / "manifest.toml").write_text(spec.get("manifest") or MANIFEST.format(
-            version=spec.get("version", "b11510"), ref=spec.get("ref", OLD_SHA)))
-        (d / "Containerfile").write_text(spec.get("containerfile") or CONTAINERFILE.format(
-            version=spec.get("version", "b11510"), ref=spec.get("ref", OLD_SHA)))
+        v, r = spec.get("version", "b11510"), spec.get("ref", OLD_SHA)
+        (d / "manifest.toml").write_text(spec.get("manifest") or MANIFEST.format(version=v, ref=r))
+        (d / "Containerfile").write_text(spec.get("containerfile") or CONTAINERFILE.format(version=v, ref=r))
 
 
 class LibTests(unittest.TestCase):
-    def test_immutable_tag(self):
-        self.assertEqual(lib.immutable_tag("b11552", "1a2b3c4d5e" * 4), "b11552-r1a2b3c4")
+    def test_tag_shape(self):
+        self.assertTrue(lib.TAG_RE.match("b11552-r1a2b3c4"))
         self.assertTrue(lib.TAG_RE.match("0.9.44-r1a2b3c4"))
         for bad in ("latest", "b11552", "b11552-rXYZ1234", "-r1a2b3c4", "main"):
             self.assertFalse(lib.TAG_RE.match(bad), bad)
 
-    def test_runner_keys_skip_shared_and_manifestless(self):
+    def test_runner_keys_skip_underscore_and_manifestless(self):
         with tempfile.TemporaryDirectory() as t:
             root = Path(t)
             make_tree(root, {"standard": {}, "cpu": {}})
-            (root / "runners" / "_shared").mkdir()
+            (root / "runners" / "_x").mkdir()
             (root / "runners" / "empty").mkdir()
             self.assertEqual(lib.runner_keys(root), ["cpu", "standard"])
-
-    def test_build_paths_reject_escape(self):
-        with tempfile.TemporaryDirectory() as t:
-            root = Path(t)
-            make_tree(root, {"standard": {}})
-            with self.assertRaises(SystemExit):
-                lib.build_paths("standard", {"build": {"context": "../x"}}, root)
 
 
 class PlanTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
-        make_tree(self.root, {"standard": {}, "cpu": {}, "kokoro": {}})
-        # standard's Containerfile uses the shared entrypoint; kokoro does not.
-        (self.root / "runners" / "standard" / "Containerfile").write_text("COPY runners/_shared/entrypoint.sh /\n")
-        (self.root / "runners" / "_shared").mkdir()
+        make_tree(self.root, {"standard": {}, "cpu": {}, "kokoro": {"manifest": "[source]\nversion='1'\n"}},
+                  pin={"version": "b11510", "ref": OLD_SHA})
+        # standard and cpu name the shared pin file; kokoro does not.
+        for k in ("standard", "cpu"):
+            (self.root / "runners" / k / "manifest.toml").write_text("# pin: llama.cpp.toml\n")
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -95,9 +97,9 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(plan.select_changed(keys, ["docs/UPDATING.md", "runners/README.md"], self.root), [])
         self.assertEqual(plan.select_changed(keys, ["runners/gone/Containerfile"], self.root), [])
 
-    def test_shared_selects_only_users(self):
+    def test_shared_pin_file_selects_the_runners_that_name_it(self):
         keys = lib.runner_keys(self.root)
-        self.assertEqual(plan.select_changed(keys, ["runners/_shared/entrypoint.sh"], self.root), ["standard"])
+        self.assertEqual(plan.select_changed(keys, ["runners/llama.cpp.toml"], self.root), ["cpu", "standard"])
 
     def test_unknown_diff_builds_everything(self):
         keys = lib.runner_keys(self.root)
@@ -111,12 +113,18 @@ class PlanTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             plan.select_explicit(keys, "strix")
 
-    def test_matrix_fields(self):
-        m = plan.build_matrix(["cpu"], "1234567" + "0" * 33, self.root)["include"][0]
-        self.assertEqual(m["package"], "ghcr.io/hal0ai/hal0-runner-cpu")
-        self.assertEqual(m["tag"], "b11510-r1234567")
-        self.assertEqual(m["containerfile"], "runners/cpu/Containerfile")
-        self.assertFalse(m["has_check"])
+    def test_matrix_validation(self):
+        good = lambda sel: {"include": [{"key": k, "image": f"ghcr.io/hal0ai/hal0-runner-{k}", "tag": "b1-r1234567"} for k in sel]}  # noqa: E731
+        m = plan.build_matrix(["cpu"], good)
+        self.assertEqual(m["include"][0]["timeout_minutes"], 360)
+        self.assertFalse(m["include"][0]["heavy"])
+        self.assertEqual(plan.build_matrix([], good), {"include": []})
+        bad_image = lambda sel: {"include": [{"key": "cpu", "image": "ghcr.io/hal0ai/hal0-combined", "tag": "b1-r1234567"}]}  # noqa: E731
+        bad_tag = lambda sel: {"include": [{"key": "cpu", "image": "ghcr.io/hal0ai/hal0-runner-cpu", "tag": "latest"}]}  # noqa: E731
+        wrong_set = lambda sel: good(["standard"])  # noqa: E731
+        for lister in (bad_image, bad_tag, wrong_set):
+            with self.assertRaises(SystemExit):
+                plan.build_matrix(["cpu"], lister)
 
 
 class ReleaseWatchTests(unittest.TestCase):
@@ -124,41 +132,35 @@ class ReleaseWatchTests(unittest.TestCase):
         self.assertTrue(rw.is_newer("b11552", "b11510"))
         self.assertFalse(rw.is_newer("b11510", "b11510"))
         self.assertFalse(rw.is_newer("b9999", "b11510"))
-        self.assertTrue(rw.is_newer("v0.9.45", "0.9.44"))
-        self.assertTrue(rw.same_version("v0.9.44", "0.9.44"))
         self.assertFalse(rw.is_newer("nightly", "b1"))
 
-    def test_llama_cpp_uses_b_tags_including_prereleases(self):
+    def _api(self, latest="b11552"):
         rels = [
             {"tag_name": "b11551", "html_url": "u51", "prerelease": True, "draft": False},
-            {"tag_name": "b11552", "html_url": "u52", "prerelease": True, "draft": False},
-            {"tag_name": "b11553", "html_url": "u53", "prerelease": True, "draft": True},
+            {"tag_name": latest, "html_url": "https://x/rel", "prerelease": True, "draft": False},
+            {"tag_name": "b99999", "html_url": "u", "prerelease": True, "draft": True},
             {"tag_name": "v0.6.0", "html_url": "u06", "prerelease": False, "draft": False},
         ]
 
         def api(path):
             if "releases?per_page" in path:
                 return rels
+            if "/commits/" in path:
+                return {"sha": NEW_SHA}
             raise AssertionError(f"/releases/latest must not be used for llama.cpp: {path}")
+        return api
 
-        up = rw.latest_upstream("ggml-org/llama.cpp", api)
-        self.assertEqual(up.tag, "b11552")
+    def test_takes_highest_b_tag_including_prereleases_not_drafts(self):
+        self.assertEqual(rw.latest_release(self._api())["tag_name"], "b11552")
 
-    def test_other_upstream_uses_latest_then_tags(self):
-        up = rw.latest_upstream("o/r", lambda p: {"tag_name": "v1.2.0", "html_url": "u"} if p.endswith("/releases/latest") else None)
-        self.assertEqual(up.tag, "v1.2.0")
-        up = rw.latest_upstream("o/r", lambda p: None if p.endswith("/releases/latest") else [{"name": "v1.0"}, {"name": "v1.10"}, {"name": "v1.9"}])
-        self.assertEqual(up.tag, "v1.10")
-
-    def test_rewrite_source_table_touches_only_source(self):
-        text = MANIFEST.format(version="b11510", ref=OLD_SHA)
-        new, n = rw.rewrite_source_table(text, "b11552", NEW_SHA, "llama.cpp release b11552")
+    def test_rewrite_table_touches_only_that_table(self):
+        text = PIN.format(version="b11510", ref=OLD_SHA)
+        new, n = rw.rewrite_table(text, "llama_cpp", {"version": "b11552", "ref": NEW_SHA, "ref_description": "d"})
         self.assertEqual(n, 3)
         doc = tomllib.loads(new)
-        self.assertEqual(doc["source"]["version"], "b11552")
-        self.assertEqual(doc["source"]["ref"], NEW_SHA)
-        self.assertEqual(doc["lifecycle"]["ref"], "must-not-change")
-        self.assertIn("# tag prefix", new)  # trailing comment kept
+        self.assertEqual((doc["llama_cpp"]["version"], doc["llama_cpp"]["ref"]), ("b11552", NEW_SHA))
+        self.assertEqual(doc["other"]["ref"], "must-not-change")
+        self.assertIn("# release tag", new)
 
     def test_rewrite_containerfile_args_only_matching_args(self):
         cf = CONTAINERFILE.format(version="b11510", ref=OLD_SHA)
@@ -169,82 +171,74 @@ class ReleaseWatchTests(unittest.TestCase):
         self.assertIn("ARG KEEP=other", new)
         self.assertIn(f"RUN echo {OLD_SHA}", new)  # not an ARG line: untouched
 
-    def _api(self, latest="b11552"):
-        def api(path):
-            if "releases?per_page" in path:
-                return [{"tag_name": latest, "html_url": "https://x/rel", "prerelease": True, "draft": False}]
-            if "/commits/" in path:
-                return {"sha": NEW_SHA}
-            if path.endswith("/releases/latest"):
-                return {"tag_name": "v9.9.9", "html_url": "https://x/other"}
-            raise AssertionError(path)
-        return api
-
-    def test_bump_edits_both_runners_together_and_reports_the_rest(self):
+    def test_bump_moves_pin_and_every_mirror_together(self):
         with tempfile.TemporaryDirectory() as t:
             root = Path(t)
             make_tree(root, {
-                "standard": {"version": "b11510"},
-                "cpu": {"version": "b11500", "ref": "b11500"},
-                "flm": {"manifest": MANIFEST.replace("ggml-org/llama.cpp", "FastFlowLM/FastFlowLM").format(version="0.9.40", ref="v0.9.40")},
-            })
-            (root / "runners" / "cpu" / "Containerfile").write_text(CONTAINERFILE.format(version="b11500", ref="b11500"))
-            rows, bump, report = rw.run(root, self._api(), apply=True)
+                "standard": {},
+                "cpu": {"version": "b11510", "ref": "b11510"},  # tag-style mirror
+                "kokoro": {"manifest": MANIFEST.replace("llama.cpp", "x").format(version="1.0", ref="v1.0"),
+                           "containerfile": "FROM scratch\nARG V=1.0\n"},
+            }, pin={"version": "b11510", "ref": OLD_SHA})
+            bump = rw.run(root, self._api(), apply=True)
 
-            self.assertEqual(bump.runners, ["cpu", "standard"])
-            self.assertEqual(bump.previous, {"cpu": "b11500", "standard": "b11510"})
-            for key in ("standard", "cpu"):
+            self.assertEqual((bump.previous, bump.tag, bump.commit), ("b11510", "b11552", NEW_SHA))
+            pin = tomllib.loads((root / "runners/llama.cpp.toml").read_text())["llama_cpp"]
+            self.assertEqual((pin["version"], pin["ref"]), ("b11552", NEW_SHA))
+            for key, ref in (("standard", NEW_SHA), ("cpu", NEW_SHA)):
                 src = tomllib.loads((root / "runners" / key / "manifest.toml").read_text())["source"]
                 self.assertEqual(src["version"], "b11552")
-            # SHA pins stay SHAs, tag pins stay tags.
-            self.assertEqual(tomllib.loads((root / "runners/standard/manifest.toml").read_text())["source"]["ref"], NEW_SHA)
-            self.assertEqual(tomllib.loads((root / "runners/cpu/manifest.toml").read_text())["source"]["ref"], "b11552")
-            self.assertIn(f'ARG LLAMA_REF="{NEW_SHA}"', (root / "runners/standard/Containerfile").read_text())
-            self.assertIn("ARG LLAMA_REF=\"b11552\"", (root / "runners/cpu/Containerfile").read_text())
-            # flm is report-only: untouched, listed as newer.
-            self.assertIn('version = "0.9.40"', (root / "runners/flm/manifest.toml").read_text())
-            flm = next(r for r in rows if r.key == "flm")
-            self.assertEqual((flm.status, flm.latest), ("newer", "v9.9.9"))
-            self.assertIn("report only", report)
+                self.assertIn(f'ARG LLAMA_VERSION=b11552', (root / "runners" / key / "Containerfile").read_text())
+            # unrelated runner untouched
+            self.assertIn('version = "1.0"', (root / "runners/kokoro/manifest.toml").read_text())
+            self.assertNotIn("runners/kokoro/manifest.toml", bump.files)
+            self.assertIn("runners/llama.cpp.toml", bump.files)
 
-    def test_no_bump_when_current_and_dry_run_writes_nothing(self):
+    def test_current_pin_means_no_bump_and_dry_run_writes_nothing(self):
         with tempfile.TemporaryDirectory() as t:
             root = Path(t)
-            make_tree(root, {"standard": {"version": "b11552"}})
-            _, bump, _ = rw.run(root, self._api(), apply=True)
-            self.assertIsNone(bump)
+            make_tree(root, {}, pin={"version": "b11552", "ref": NEW_SHA})
+            self.assertIsNone(rw.run(root, self._api(), apply=True))
         with tempfile.TemporaryDirectory() as t:
             root = Path(t)
-            make_tree(root, {"standard": {"version": "b11510"}})
-            before = (root / "runners/standard/manifest.toml").read_text()
-            _, bump, _ = rw.run(root, self._api(), apply=False)
-            self.assertEqual(bump.tag, "b11552")
-            self.assertEqual((root / "runners/standard/manifest.toml").read_text(), before)
+            make_tree(root, {}, pin={"version": "b11510", "ref": OLD_SHA})
+            before = (root / "runners/llama.cpp.toml").read_text()
+            self.assertEqual(rw.run(root, self._api(), apply=False).tag, "b11552")
+            self.assertEqual((root / "runners/llama.cpp.toml").read_text(), before)
 
-    def test_bump_fails_loudly_without_an_arg_to_edit(self):
+    def test_missing_pin_file_fails_loudly(self):
         with tempfile.TemporaryDirectory() as t:
-            root = Path(t)
-            make_tree(root, {"standard": {"containerfile": "FROM scratch\nRUN git checkout b11510\n"}})
             with self.assertRaises(SystemExit):
-                rw.run(root, self._api(), apply=True)
+                rw.run(Path(t), self._api(), apply=True)
 
 
 class PromoteTests(unittest.TestCase):
     RESULT = {"runner": "standard", "image": "ghcr.io/hal0ai/hal0-runner-standard",
-              "tag": "b11552-r1a2b3c4", "digest": DIGEST}
+              "tag": "b11552-r1a2b3c4", "digest": DIGEST,
+              "gate_report": "https://example.test/report.json", "gate_machine_verified": True,
+              "lanes_gated": ["rocm", "vulkan"]}
 
-    def test_edit_catalogue_v1_and_v2_shapes_touch_only_tag_and_digest(self):
-        for list_key, id_key in (("images", "id"), ("runners", "key")):
-            raw = json.dumps({"schema": "x", list_key: [
-                {id_key: "standard", "image": self.RESULT["image"], "tag": "old", "digest": "sha256:" + "0" * 64, "summary": "é"},
-                {id_key: "cpu", "image": "ghcr.io/hal0ai/hal0-runner-cpu", "tag": "t"},
-            ]}, indent=2, ensure_ascii=False) + "\n"
-            out = json.loads(promote.edit_catalogue(raw, self.RESULT))
-            std, cpu = out[list_key]
-            self.assertEqual((std["tag"], std["digest"]), (self.RESULT["tag"], DIGEST))
-            self.assertEqual(cpu["tag"], "t")
-            self.assertEqual(std["summary"], "é")
-            self.assertTrue(promote.edit_catalogue(raw, self.RESULT).endswith("}\n"))
+    def test_edit_catalogue_moves_candidate_to_pin_and_touches_nothing_else(self):
+        raw = json.dumps({"schema": "hal0.runner-images.v2", "runners": [
+            {"key": "standard", "image": self.RESULT["image"], "tag": "old", "digest": "sha256:" + "0" * 64,
+             "candidate": {"tag": self.RESULT["tag"], "digest": DIGEST}, "gate_report": None,
+             "lanes_gated": [], "summary": "é"},
+            {"key": "cpu", "image": "ghcr.io/hal0ai/hal0-runner-cpu", "tag": "t", "candidate": None},
+        ]}, indent=2, ensure_ascii=False) + "\n"
+        out = json.loads(promote.edit_catalogue(raw, self.RESULT))
+        std, cpu = out["runners"]
+        self.assertEqual((std["tag"], std["digest"]), (self.RESULT["tag"], DIGEST))
+        self.assertIsNone(std["candidate"])
+        self.assertEqual(std["gate_report"], "https://example.test/report.json")
+        self.assertEqual(std["lanes_gated"], ["rocm", "vulkan"])
+        self.assertEqual(std["summary"], "é")
+        self.assertEqual(cpu, {"key": "cpu", "image": "ghcr.io/hal0ai/hal0-runner-cpu", "tag": "t", "candidate": None})
+        self.assertTrue(promote.edit_catalogue(raw, self.RESULT).endswith("}\n"))
+
+    def test_lanes_are_not_set_from_a_report_that_was_not_machine_checked(self):
+        raw = json.dumps({"runners": [{"key": "standard", "image": self.RESULT["image"], "lanes_gated": ["vulkan"]}]})
+        res = dict(self.RESULT, gate_machine_verified=False, lanes_gated=[])
+        self.assertEqual(json.loads(promote.edit_catalogue(raw, res))["runners"][0]["lanes_gated"], ["vulkan"])
 
     def test_edit_catalogue_rejects_unknown_or_mismatched_runner(self):
         raw = json.dumps({"runners": [{"key": "cpu", "image": "ghcr.io/hal0ai/hal0-runner-cpu"}]})

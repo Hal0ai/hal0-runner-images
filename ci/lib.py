@@ -3,22 +3,18 @@
 stdlib only: the workflows call these on a bare GitHub-hosted runner with no
 pip install step.
 
-THE RECIPE CONTRACT the CI relies on. The recipes side owns these files; if
-one of these assumptions stops holding, this module is the one place to adjust:
+THE RECIPE CONTRACT the CI relies on (the recipes side owns these files; if one
+stops holding, adjust it here and in docs/UPDATING.md):
 
-  runners/<key>/manifest.toml   required. Directory name == runner key.
-      [source]  repo     GitHub URL of the upstream project
-                version  upstream version string; becomes the image tag prefix
-                ref      git tag or full commit SHA that the Containerfile builds
-      [build]   context        optional, default "runners/<key>"
-                containerfile  optional, default "<context>/Containerfile"
-  runners/<key>/Containerfile   required (path above). The pins it consumes
-                are ARG defaults, so the bump PR edits manifest.toml and the
-                ARG lines together.
-  runners/<key>/build.sh        optional. If present, `build.sh --check` runs
-                on every PR / merge before the image build.
-  runners/_shared/              optional. Not a runner. A runner is rebuilt for
-                a change here only if one of its own files mentions "_shared".
+  runners/<key>/manifest.toml   one directory per runner; the name is the key.
+  scripts/runner.py             the only build entrypoint:
+      list --only k1,k2         GitHub matrix JSON: key, image, tag, heavy, timeout_minutes
+      build <key> --check       static checks, no container runtime
+      build <key> --tag <ref>   build (never pushes); sets every OCI label, and
+                                org.opencontainers.image.version must equal the tag
+  runners/llama.cpp.toml        the ONE llama.cpp release pin shared by standard,
+                                cpu (and the external cuda entry); see release_watch.py
+  images.json                   hal0.runner-images.v2, runners[] keyed by `key`
 """
 
 from __future__ import annotations
@@ -26,7 +22,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import tomllib
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -39,8 +34,6 @@ PACKAGE_PREFIX = "ghcr.io/hal0ai/hal0-runner-"
 
 KEY_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
-# Docker tag charset, no leading '.' or '-'.
-VERSION_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,100}$")
 # <upstream-version>-r<recipe-sha7>
 TAG_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,100}-r[0-9a-f]{7}$")
 GH_REPO_RE = re.compile(r"^https://github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$")
@@ -68,53 +61,8 @@ def runner_keys(root: Path = ROOT) -> list[str]:
     )
 
 
-def load_manifest(key: str, root: Path = ROOT) -> dict:
-    if not KEY_RE.match(key):
-        raise CIError(f"invalid runner key {key!r}")
-    path = root / "runners" / key / "manifest.toml"
-    if not path.is_file():
-        raise CIError(f"unknown runner {key!r}: {path.relative_to(root)} does not exist")
-    return tomllib.loads(path.read_text())
-
-
 def package_for(key: str) -> str:
     return f"{PACKAGE_PREFIX}{key}"
-
-
-def source_of(key: str, manifest: dict) -> dict:
-    src = manifest.get("source") or {}
-    for field in ("repo", "version", "ref"):
-        if not isinstance(src.get(field), str) or not src[field].strip():
-            raise CIError(f"runners/{key}/manifest.toml: [source].{field} missing or empty")
-    if not VERSION_RE.match(src["version"]):
-        raise CIError(
-            f"runners/{key}/manifest.toml: [source].version {src['version']!r} cannot be an "
-            "image tag prefix (allowed: letters, digits, '_', '.', '-')"
-        )
-    return src
-
-
-def immutable_tag(version: str, commit_sha: str) -> str:
-    """`<upstream-version>-r<recipe-sha7>`. Built once, never moved."""
-    if not re.fullmatch(r"[0-9a-f]{7,40}", commit_sha):
-        raise CIError(f"not a commit sha: {commit_sha!r}")
-    return f"{version}-r{commit_sha[:7]}"
-
-
-def build_paths(key: str, manifest: dict, root: Path = ROOT) -> tuple[str, str]:
-    """(context, containerfile), both repo-relative and verified to exist."""
-    build = manifest.get("build") or {}
-    context = build.get("context") or f"runners/{key}"
-    containerfile = build.get("containerfile") or f"{context}/Containerfile"
-    for label, rel in (("context", context), ("containerfile", containerfile)):
-        resolved = (root / rel).resolve()
-        if root.resolve() not in resolved.parents and resolved != root.resolve():
-            raise CIError(f"runners/{key}: [build].{label} {rel!r} escapes the repository")
-    if not (root / context).is_dir():
-        raise CIError(f"runners/{key}: build context {context!r} is not a directory")
-    if not (root / containerfile).is_file():
-        raise CIError(f"runners/{key}: {containerfile!r} does not exist")
-    return context, containerfile
 
 
 def split_github_repo(url: str) -> tuple[str, str] | None:

@@ -8,14 +8,16 @@ name: Promote runner image
 #   gate_report  https URL of the gate report (JSON, schema hal0.gate-report.v1)
 #
 # It verifies, then opens TWO pull requests and merges neither:
-#   1. this repo:  images.json  tag + digest of that runner
+#   1. this repo:  images.json  the runner's tag + digest (candidate cleared),
+#                  gate_report and lanes_gated (from the gate report)
 #   2. Hal0ai/hal0: its runner pin table in manifest.json (and only that file)
 #
 # Verification (ci/promote.py verify): the digest exists in
 # ghcr.io/hal0ai/hal0-runner-<runner>; its signed provenance says it was built by
 # .github/workflows/build.yml on refs/heads/main of this repository; its
 # immutable tag still points at that digest; and the gate report names the same
-# digest and passed.
+# digest and passed. An external runner (cuda) has no build here: its digest and
+# the `tag` input are checked against the registry, with no provenance check.
 #
 # SECRETS
 #   HAL0_MANIFEST_PR_TOKEN   (already exists, used by the old pin-digests
@@ -41,6 +43,11 @@ on:
         description: "https URL of the gate report JSON"
         type: string
         required: true
+      tag:
+        description: "External runners only (cuda: no recipe here): the upstream tag that names the digest. Leave blank for built runners"
+        type: string
+        required: false
+        default: ""
       create_missing_hal0_row:
         description: "Add the runner's row to hal0's pin table if it has none (normally hal0 adds rows first)"
         type: boolean
@@ -67,6 +74,7 @@ jobs:
       PROMOTE_RUNNER: ${{ inputs.runner }}
       DIGEST: ${{ inputs.digest }}
       GATE_REPORT: ${{ inputs.gate_report }}
+      EXTERNAL_TAG: ${{ inputs.tag }}
       THIS_TOKEN: ${{ secrets.RUNNER_IMAGES_PR_TOKEN || github.token }}
       HAL0_TOKEN: ${{ secrets.HAL0_MANIFEST_PR_TOKEN }}
     steps:
@@ -96,7 +104,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           python3 ci/promote.py verify --runner "$PROMOTE_RUNNER" --digest "$DIGEST" \
-            --gate-report "$GATE_REPORT" --token "$GH_TOKEN" --out "$RUNNER_TEMP/result.json"
+            --gate-report "$GATE_REPORT" --tag "$EXTERNAL_TAG" --token "$GH_TOKEN" --out "$RUNNER_TEMP/result.json"
 
       - name: Build the pull request text
         run: |
@@ -106,6 +114,10 @@ jobs:
           print(f"Pins runner `{r['runner']}` to `{r['image']}:{r['tag']}`")
           print()
           print(f"- digest: `{r['digest']}`")
+          if r["external"]:
+              print("- external image: no build provenance from this repository to verify")
+          if r["lanes_gated"]:
+              print(f"- lanes gated: {', '.join(r['lanes_gated'])}")
           if r["source_commit"]:
               print(f"- built from `{r['source_commit']}` of Hal0ai/hal0-runner-images (signed build provenance, refs/heads/main)")
           print(f"- gate report: {r['gate_report']}")

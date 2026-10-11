@@ -16,30 +16,33 @@ release-watch  ->  bump PR  ->  merge  ->  candidate  ->  gate  ->  promote  -> 
 
 ## 1. Find a newer upstream: `release-watch.yml`
 
-Mondays 06:17 UTC, or dispatch. It reads ggml-org/llama.cpp and compares its
-newest `b<N>` release with the pin in `runners/standard/manifest.toml`. If it is
-newer it opens **one** PR that edits `runners/standard` and `runners/cpu` (they
-pin the same release) in both `manifest.toml` (`[source].version`, `[source].ref`)
-and the Containerfile `ARG` defaults. An older open bump PR is closed as
+Mondays 06:17 UTC, or dispatch. `standard`, `cpu` and the external `cuda` entry
+share **one** llama.cpp release pin, `runners/llama.cpp.toml`. The watch compares
+ggml-org's newest `b<N>` release with it and, if newer, opens **one** PR that
+edits that file and every place that mirrors it (Containerfile `ARG` defaults,
+`[source]` tables in runner manifests). An older open bump PR is closed as
 superseded.
 
 (ggml-org marks every `b<N>` tag a prerelease, so GitHub's "latest release" is
 an unrelated old one. The watch lists releases and takes the highest `b<N>`.)
 
-For `flm`, `comfyui`, `kokoro`, `moonshine` and `qwen3tts` it only reports: the
-issue **Runner upstream watch** lists newer upstream versions. To take one, edit
-that runner's `manifest.toml` and Containerfile `ARG` lines in an ordinary PR.
+Every other runner is report-only: `scripts/source_watch.py` writes the report
+and the issue **Runner upstream watch** lists newer upstream versions. To take
+one, edit that runner's recipe in an ordinary PR.
 
 ## 2. Check the bump: `build.yml` on the PR
 
-Builds only the runners whose `runners/<key>/**` files changed. For each:
-`runners/<key>/build.sh --check` if the recipe has one, then a full image build
-with `push=false`. A broken bump is red before anyone reads the diff. Require the
+Builds only the runners whose `runners/<key>/**` files changed (a change to
+`runners/llama.cpp.toml` selects the runners that name it). For each:
+`python3 scripts/runner.py build <key> --check`, then a full image build with
+`push=false`. A broken bump is red before anyone reads the diff. Require the
 **result** job in branch protection; it is the one check that always reports.
 
 ## 3. Merge: `build.yml` on main
 
-The same build, then it pushes the immutable tag, attests build provenance
+The same build, then it pushes the immutable tag (`scripts/runner.py` computes it:
+upstream version plus the last commit that touched `runners/<key>/`), attests
+build provenance
 (signed, queryable with `gh attestation verify`) and records a **candidate**:
 
 - a commit comment on the merge commit with runner, tag and digest;
@@ -47,11 +50,11 @@ The same build, then it pushes the immutable tag, attests build provenance
 - a `candidate-<key>` artifact (`<key>.json`, kept 90 days).
 
 A candidate is not pinned anywhere. Nothing that hal0 pulls changes. If the tag
-already exists the job fails instead of overwriting it.
+already exists, that recipe was already built: the leg is skipped and the tag is
+never overwritten.
 
 To build a runner without changing its files (for example a new package):
 dispatch **Build runner images** on `main` with `runners=<key>` and `push=true`.
-The same commit can only build a given runner once.
 
 ## 4. Gate: the Strix Halo test box
 
@@ -96,9 +99,15 @@ Dispatch on `main` with `runner`, `digest` and `gate_report`. It first verifies:
 
 Then it opens two PRs and merges neither:
 
-- **this repo:** `images.json` gets that runner's `tag` and `digest`;
+- **this repo:** `images.json` gets that runner's `tag` and `digest`, its
+  `candidate` is cleared, and `gate_report` and `lanes_gated` are set from the
+  report (lanes whose `passed` is true; only when the report was machine-checked);
 - **Hal0ai/hal0:** the runner's row in the pin table of `manifest.json`, and no
   other file (the job aborts if anything else changed).
+
+`cuda` has no recipe here (it pins ggml-org's own image). Promote it with the
+extra `tag` input; it then checks the digest and tag in the registry but cannot
+check build provenance.
 
 The field names hal0 expects live in one commented block at the top of
 `ci/promote.py` (`HAL0_PIN_TABLE`, `HAL0_FIELDS`, `HAL0_TAG_IS_FULL_REF`).
@@ -126,20 +135,19 @@ GitHub Actions to create and approve pull requests" on. Each new
 as an Actions write target before the first push, or hal0 cannot pull it
 anonymously.
 
-## What CI expects from a recipe
+## What CI expects from the recipes side
 
-Defined in `ci/lib.py` (docstring). If the recipe layout changes, change it there.
+Defined in the docstring of `ci/lib.py`. If the layout changes, change it there.
 
-- `runners/<key>/manifest.toml` with `[source]` `repo`, `version`, `ref`.
-  `version` is the image tag prefix; `ref` is the git tag or full commit SHA.
-- `runners/<key>/Containerfile`, build context `runners/<key>/`. Override with
-  `[build] context` / `containerfile`.
-- The pinned values appear as `ARG NAME=<value>` defaults in the Containerfile,
-  so a bump edits manifest and Containerfile together. A bump fails loudly if it
-  finds no such `ARG`.
-- `runners/<key>/build.sh --check` (optional) runs before the build.
-- `runners/_shared/` is not a runner. A change there rebuilds only runners that
-  mention `_shared` in their own files.
-- The Containerfile sets `org.opencontainers.image.source` and `.revision` (the
-  upstream source hal0 shows as provenance). CI sets `title`, `version`,
-  `dev.hal0.runner.key`, `dev.hal0.recipe.revision` and `dev.hal0.recipe.repo`.
+- One directory per runner, `runners/<key>/`, with a `manifest.toml`; the
+  directory name is the runner key and the package is
+  `ghcr.io/hal0ai/hal0-runner-<key>`.
+- `scripts/runner.py` is the only build entrypoint: `list --only <keys>` (matrix
+  JSON: `key`, `image`, `tag`, `heavy`, `timeout_minutes`), `build <key> --check`
+  and `build <key> --tag <ref>` (never pushes).
+- The image's `org.opencontainers.image.version` label equals its immutable tag.
+  Promote reads the tag from it.
+- `runners/llama.cpp.toml` holds the shared pin (`[llama_cpp]` `version`, `ref`);
+  the constants are at the top of `ci/release_watch.py`.
+- `images.json` is `hal0.runner-images.v2`: a `runners` array keyed by `key`, with
+  `image`, `tag`, `digest`, `candidate`, `gate_report`, `lanes_gated`.

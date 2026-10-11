@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """Decide which runners a build.yml run builds, and emit the matrix.
 
-    python3 ci/plan.py --sha <sha> --base <sha> --head <sha>   # pull_request / push
-    python3 ci/plan.py --sha <sha> --select standard,cpu       # workflow_dispatch
-    python3 ci/plan.py --sha <sha> --select all
+    python3 ci/plan.py --base <sha> --head <sha>     # pull_request / push
+    python3 ci/plan.py --select standard,cpu         # workflow_dispatch
+    python3 ci/plan.py --select all
 
-A runner is selected when a changed path is under runners/<key>/. A change under
-runners/_shared/ selects only the runners that mention "_shared" in their own
-files (the Containerfile COPY line, a build script). A base that is empty, all
+A runner is selected when a changed path is under runners/<key>/. A changed
+file directly under runners/ (runners/llama.cpp.toml) selects the runners whose
+manifest.toml or Containerfile mention its file name. A base that is empty, all
 zeros or unknown to git selects every runner: fail wide, never build nothing by
-accident.
+accident. The matrix itself (image, tag, heavy, timeout) comes from
+`scripts/runner.py list`, so the recipes side stays the one authority.
 
 Outputs (GITHUB_OUTPUT): matrix, has_runners, runners.
 """
@@ -21,14 +22,13 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import lib  # noqa: E402
 
 ZERO_SHA = "0" * 40
-SHARED = "_shared"
-# Files the "mentions _shared" scan reads. Small text recipe files only.
-SCAN_MAX_BYTES = 1_000_000
+REQUIRED_LEG_FIELDS = ("key", "image", "tag")
 
 
 def changed_files(base: str, head: str, root: Path = lib.ROOT) -> list[str] | None:
@@ -45,15 +45,11 @@ def changed_files(base: str, head: str, root: Path = lib.ROOT) -> list[str] | No
     return [p for p in proc.stdout.splitlines() if p]
 
 
-def uses_shared(key: str, root: Path = lib.ROOT) -> bool:
-    for p in (root / "runners" / key).rglob("*"):
-        if "patches" in p.parts or not p.is_file():
-            continue
-        try:
-            if p.stat().st_size <= SCAN_MAX_BYTES and SHARED in p.read_text(errors="ignore"):
-                return True
-        except OSError:
-            continue
+def mentions(key: str, name: str, root: Path = lib.ROOT) -> bool:
+    for fname in ("manifest.toml", "Containerfile"):
+        f = root / "runners" / key / fname
+        if f.is_file() and name in f.read_text(errors="ignore"):
+            return True
     return False
 
 
@@ -61,17 +57,14 @@ def select_changed(keys: list[str], files: list[str] | None, root: Path = lib.RO
     if files is None:
         return list(keys)
     hit: set[str] = set()
-    shared_changed = False
     for f in files:
         parts = f.split("/")
-        if len(parts) < 3 or parts[0] != "runners":  # runners/README.md etc. are not recipes
+        if parts[0] != "runners":
             continue
-        if parts[1] == SHARED:
-            shared_changed = True
-        elif parts[1] in keys:
+        if len(parts) >= 3 and parts[1] in keys:
             hit.add(parts[1])
-    if shared_changed:
-        hit.update(k for k in keys if uses_shared(k, root))
+        elif len(parts) == 2 and parts[1].endswith(".toml"):
+            hit.update(k for k in keys if mentions(k, parts[1], root))
     return sorted(hit)
 
 
@@ -85,29 +78,38 @@ def select_explicit(keys: list[str], select: str) -> list[str]:
     return sorted(set(wanted))
 
 
-def build_matrix(selected: list[str], sha: str, root: Path = lib.ROOT) -> dict:
-    legs = []
-    for key in selected:
-        manifest = lib.load_manifest(key, root)
-        src = lib.source_of(key, manifest)
-        context, containerfile = lib.build_paths(key, manifest, root)
-        legs.append({
-            "key": key,
-            "package": lib.package_for(key),
-            "version": src["version"],
-            "tag": lib.immutable_tag(src["version"], sha),
-            "upstream_repo": src["repo"],
-            "upstream_ref": src["ref"],
-            "context": context,
-            "containerfile": containerfile,
-            "has_check": (root / "runners" / key / "build.sh").is_file(),
-        })
-    return {"include": legs}
+def runner_list(selected: list[str], root: Path = lib.ROOT) -> dict:
+    proc = subprocess.run(
+        [sys.executable, "scripts/runner.py", "list", "--only", ",".join(selected)],
+        cwd=root, capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        raise lib.CIError(f"scripts/runner.py list failed:\n{proc.stderr.strip()}")
+    return json.loads(proc.stdout)
+
+
+def build_matrix(selected: list[str], lister: Callable[[list[str]], dict] = runner_list) -> dict:
+    if not selected:
+        return {"include": []}
+    matrix = lister(selected)
+    legs = matrix.get("include") or []
+    if sorted(leg.get("key") for leg in legs) != sorted(selected):
+        raise lib.CIError(f"runner.py list returned {[l.get('key') for l in legs]}, expected {selected}")
+    for leg in legs:
+        missing = [f for f in REQUIRED_LEG_FIELDS if not leg.get(f)]
+        if missing:
+            raise lib.CIError(f"runner.py list: {leg.get('key')} lacks {missing}")
+        if leg["image"] != lib.package_for(leg["key"]):
+            raise lib.CIError(f"{leg['key']}: image {leg['image']!r} is not {lib.package_for(leg['key'])!r}")
+        if not lib.TAG_RE.match(leg["tag"]):
+            raise lib.CIError(f"{leg['key']}: tag {leg['tag']!r} is not <version>-r<sha7>")
+        leg.setdefault("heavy", False)
+        leg.setdefault("timeout_minutes", 360)
+    return matrix
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--sha", required=True, help="commit the tag's -r<sha7> comes from")
     ap.add_argument("--base", default="")
     ap.add_argument("--head", default="HEAD")
     ap.add_argument("--select", default="", help="comma list of runner keys, or 'all' (workflow_dispatch)")
@@ -118,7 +120,7 @@ def main(argv: list[str] | None = None) -> int:
         selected = select_explicit(keys, args.select)
     else:
         selected = select_changed(keys, changed_files(args.base, args.head))
-    matrix = build_matrix(selected, args.sha)
+    matrix = build_matrix(selected)
 
     print(f"runners selected: {selected or 'none'}", file=sys.stderr)
     lib.set_output("matrix", json.dumps(matrix, separators=(",", ":")))

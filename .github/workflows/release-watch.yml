@@ -2,10 +2,12 @@ name: Release watch
 
 # Weekly: look for newer upstream releases (docs/UPDATING.md, step 1).
 #
-#   standard + cpu  both pin one ggml-org/llama.cpp release. If a newer one
-#                   exists this opens ONE bump PR editing both recipes'
-#                   manifest.toml and Containerfile ARGs together.
-#   everything else report only: one tracking issue lists newer upstream versions.
+#   llama.cpp      standard, cpu (and the external cuda entry) share one release
+#                  pin, runners/llama.cpp.toml. If ggml-org has a newer b<N>
+#                  release this opens ONE bump PR editing that file and every
+#                  Containerfile ARG / manifest that mirrors it.
+#   everything else report only: scripts/source_watch.py writes a report and one
+#                  tracking issue lists newer upstream versions.
 #
 # The bump PR is an ordinary PR: build.yml builds it with push=false, a person
 # merges it, and the merge builds the immutable tag. Nothing here builds,
@@ -57,8 +59,12 @@ jobs:
           set -euo pipefail
           apply=()
           if [[ "${{ inputs.dry_run }}" != "true" ]]; then apply=(--apply); fi
-          python3 ci/release_watch.py "${apply[@]}" \
-            --report-file "$RUNNER_TEMP/report.md" --json-file "$RUNNER_TEMP/result.json"
+          python3 ci/release_watch.py "${apply[@]}" --json-file "$RUNNER_TEMP/result.json"
+          python3 scripts/source_watch.py | tee "$RUNNER_TEMP/report.md"
+          if [[ -n "$(jq -r '.bump.tag // empty' "$RUNNER_TEMP/result.json")" ]]; then
+            echo "A llama.cpp bump to $(jq -r '.bump.tag' "$RUNNER_TEMP/result.json") is being prepared (shared pin, runners/llama.cpp.toml)." | cat - "$RUNNER_TEMP/report.md" > "$RUNNER_TEMP/report2.md"
+            mv "$RUNNER_TEMP/report2.md" "$RUNNER_TEMP/report.md"
+          fi
           cat "$RUNNER_TEMP/report.md" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Update the tracking issue
@@ -88,7 +94,6 @@ jobs:
             echo "::warning::RUNNER_IMAGES_PR_TOKEN is not set: the bump PR will not get a build.yml run until it is closed and reopened by a person."
           fi
 
-          runners="$(jq -r '.bump.runners | join(", ")' "$RUNNER_TEMP/result.json")"
           branch="bot/bump-llama-cpp-${tag}"
 
           # At most one open bump PR: reuse this tag's, close older ones as superseded.
@@ -104,7 +109,7 @@ jobs:
           git config user.email "bot@hal0.local"
           git checkout -b "$branch"
           git add -A runners
-          git commit -s -m "chore(runners): bump llama.cpp to ${tag} (${runners})"
+          git commit -s -m "chore(runners): bump llama.cpp to ${tag}"
           git push origin "$branch"
 
           python3 - "$RUNNER_TEMP/result.json" > "$RUNNER_TEMP/pr.md" <<'PY'
@@ -112,18 +117,16 @@ jobs:
           b = json.load(open(sys.argv[1]))["bump"]
           print(f"Bumps the shared llama.cpp pin to [`{b['tag']}`]({b['url']}) (`{b['commit'][:12]}`).")
           print()
-          print("| runner | was | now |\n|---|---|---|")
-          for k in b["runners"]:
-              print(f"| `{k}` | `{b['previous'][k]}` | `{b['tag']}` |")
+          print(f"Was `{b['previous']}`. Files changed: " + ", ".join(f"`{f}`" for f in b["files"]) + ".")
           print()
           print(f"Upstream changes: {b['compare_url']}")
           print()
-          print("`manifest.toml` and the Containerfile `ARG` defaults are changed together.")
+          print("standard, cpu and cuda share this pin, so they move together.")
           print()
           print("## Before merging")
           print()
           print("- [ ] Read the upstream diff for changes to flags, defaults, API or chat templating")
-          print("- [ ] `build.yml` is green: it builds both images with `push=false`")
+          print("- [ ] `build.yml` is green: it builds the changed images with `push=false`")
           print()
           print("## After merging")
           print()
