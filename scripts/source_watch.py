@@ -26,7 +26,9 @@ bumps to make (docs/UPDATING.md).
 Alerts are the cases that need attention now, not merely an update:
   * the pinned commit is gone upstream (history rewritten or repo deleted);
   * no release matches the pattern (the pattern or the repo is wrong);
-  * the upstream API did not answer.
+  * an upstream request failed in any way (HTTP error, DNS, connection or
+    timeout), including the pinned-commit check. The report still renders
+    and the script exits 0.
 """
 
 from __future__ import annotations
@@ -121,12 +123,28 @@ def newest_release(releases: list[dict], pattern: str, prereleases: bool = False
     return max(good, key=lambda r: r.get("published_at") or "")["tag_name"]
 
 
+#: Status _get reports when no HTTP answer arrived at all (DNS failure,
+#: refused connection, timeout, unreadable body).
+NO_ANSWER = 0
+
+
+def _answer(code: int) -> str:
+    return "no answer (network error)" if code == NO_ANSWER else f"HTTP {code}"
+
+
 def classify(t: Target, latest: str | None, api_code: int = 200, pin_code: int = 200) -> Row:
-    """Pure: turn upstream answers into one report row. Fixture-tested."""
+    """Pure: turn upstream answers into one report row. Fixture-tested.
+
+    Anything but a clean 200 from every request is an alert: a failed probe
+    is never read as "current".
+    """
     if pin_code in MISSING:
         return Row(t, latest or "?", "pinned commit gone upstream; rebuild only from the source mirror", True)
     if api_code != 200:
-        return Row(t, "?", f"upstream did not answer (HTTP {api_code}); see the workflow log", True)
+        return Row(t, "?", f"upstream did not answer ({_answer(api_code)}); see the workflow log", True)
+    if pin_code != 200:
+        return Row(t, latest or "?",
+                   f"could not check the pinned commit ({_answer(pin_code)}); see the workflow log", True)
     if latest is None:
         what = f"tag pattern `{t.pattern}`" if t.kind == "github-release" else "PyPI"
         return Row(t, "?", f"no release found ({what})", True)
@@ -147,6 +165,12 @@ def _get(url: str) -> tuple[int, object | None]:
             return resp.status, json.load(resp)
     except urllib.error.HTTPError as e:
         return e.code, None
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        # DNS failure, refused connection, timeout (TimeoutError is an
+        # OSError) or a body that is not JSON: report it, keep going, so one
+        # unreachable upstream never takes the whole report down.
+        print(f"source_watch: {url}: {e!r}", file=sys.stderr)
+        return NO_ANSWER, None
 
 
 def probe(t: Target) -> Row:
