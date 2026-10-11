@@ -37,6 +37,7 @@ comfyui-workflow-templates-media-video==0.3.101
 easydict==1.13
 einops==0.8.2
 filelock==3.29.0
+flatbuffers==25.12.19
 frozenlist==1.8.0
 fsspec==2026.3.0
 gdown==6.4.2
@@ -65,6 +66,7 @@ multidict==6.7.1
 networkx==3.6.1
 numba==0.68.0
 numpy==2.4.3
+onnxruntime==1.31.0
 opencv-python==5.0.0.93
 opencv-python-headless==5.0.0.93
 packaging==26.2

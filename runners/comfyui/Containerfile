@@ -78,13 +78,16 @@ RUN git clone https://github.com/city96/ComfyUI-GGUF /opt/ComfyUI/custom_nodes/C
     && cd /opt/ComfyUI/custom_nodes/ComfyUI-GGUF && git checkout ${GGUF_REF}
 
 # --- custom node Python dependencies, under the same constraints ---
-# Every bundled node's requirements.txt goes into the venv, pinned through
-# constraints.txt (ComfyUI-GGUF needs gguf; without it the node fails to
-# import at runtime). Then check_custom_nodes.py fails the build if any
+# Every bundled node's requirements.txt, plus node-extras.txt (runtime needs
+# the nodes do not list, e.g. rembg's ONNX runtime), goes into the venv,
+# pinned through constraints.txt (ComfyUI-GGUF needs gguf; without it the
+# node fails to import at runtime). Then check_custom_nodes.py fails the build if any
 # installed package is not pinned in constraints.txt, or if any bundled node
 # does not load through ComfyUI's own loader.
+COPY node-extras.txt /opt/hal0/node-extras.txt
 RUN cd /opt/ComfyUI/custom_nodes \
-    && for r in */requirements.txt; do printf -- '-r %s\n' "$PWD/$r"; done > /tmp/node-requirements.txt \
+    && { for r in */requirements.txt; do printf -- '-r %s\n' "$PWD/$r"; done; \
+         echo "-r /opt/hal0/node-extras.txt"; } > /tmp/node-requirements.txt \
     && cat /tmp/node-requirements.txt \
     && python -m pip install -c /opt/hal0/constraints.txt -r /tmp/node-requirements.txt \
     && python -m pip check \

@@ -10,6 +10,8 @@
    loader (nodes.load_custom_node), in CPU mode because the build host has no
    GPU. A node whose dependencies are missing (the ComfyUI-GGUF "No module
    named 'gguf'" defect) fails here instead of at runtime on a box.
+3. Runtime imports a node makes only when it runs work: onnxruntime (with
+   the CPU provider) and rembg's session factory, for background removal.
 """
 
 from __future__ import annotations
@@ -74,12 +76,29 @@ async def load_nodes() -> list[str]:
     return failed
 
 
+def check_runtimes() -> list[str]:
+    """Imports custom nodes only make at run time, so a node can load and still fail later."""
+    problems = []
+    try:
+        import onnxruntime
+
+        providers = onnxruntime.get_available_providers()
+        print(f"onnxruntime {onnxruntime.__version__}: providers {providers}", flush=True)
+        if "CPUExecutionProvider" not in providers:
+            problems.append(f"onnxruntime has no CPUExecutionProvider (providers: {providers})")
+        from rembg import new_session  # noqa: F401  (rembg's session factory; builds nothing)
+    except Exception as e:  # noqa: BLE001 - report any import failure as a build failure
+        problems.append(f"rembg's ONNX runtime is not usable: {e!r}")
+    return problems
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 1:
         print(__doc__, file=sys.stderr)
         return 64
     problems = check_pins(argv[0])
     problems += asyncio.run(load_nodes())
+    problems += check_runtimes()
     for p in problems:
         print(f"check_custom_nodes: {p}", file=sys.stderr)
     return 1 if problems else 0

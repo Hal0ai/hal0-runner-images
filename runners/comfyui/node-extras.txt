@@ -1,0 +1,6 @@
+# Python packages the bundled custom nodes need at runtime but do not list in
+# their own requirements.txt. Installed with them, under constraints.txt.
+#
+# ComfyUI_essentials lists plain `rembg`; rembg only ships its ONNX runtime as
+# an extra. The CPU build is enough for background removal.
+rembg[cpu]
