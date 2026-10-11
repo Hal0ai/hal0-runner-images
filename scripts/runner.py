@@ -21,7 +21,7 @@ full git history (actions/checkout with fetch-depth: 0).
 The build context is $HAL0_RUNNER_BUILD_DIR (default /tmp/hal0-runner-<key>).
 It holds a copy of the recipe directory and, for recipes with
 `source.checkout = true`, a full clone of the pinned source at ./src with the
-patch series applied. CI's source-mirror step bundles that ./src.
+patch series applied.
 """
 
 from __future__ import annotations
@@ -255,8 +255,9 @@ def stage(key: str, doc: dict) -> Path:
     src = doc["source"]
     if src.get("checkout"):
         target = work / "src"
-        # Full clone, not --depth 1: CI's source mirror is a `git bundle` of
-        # this checkout, and git refuses to bundle a shallow repository.
+        # Full clone, not --depth 1: llama.cpp derives its build number
+        # (`llama-server --version` -> "build 11552") from the git history;
+        # a shallow clone would report build 1.
         print(f"==> clone   {src['repo']}", file=sys.stderr)
         git("clone", "-q", "--no-checkout", src["repo"], str(target))
         git("checkout", "-q", src["ref"], cwd=target)

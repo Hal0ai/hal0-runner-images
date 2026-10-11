@@ -24,7 +24,8 @@ prints one markdown report and changes nothing; a person decides which
 bumps to make (docs/UPDATING.md).
 
 Alerts are the cases that need attention now, not merely an update:
-  * the pinned commit is gone upstream (history rewritten or repo deleted);
+  * the pinned commit is gone upstream (history rewritten or repo deleted),
+    so the recipe cannot be rebuilt until the pin moves;
   * no release matches the pattern (the pattern or the repo is wrong);
   * an upstream request failed in any way (HTTP error, DNS, connection or
     timeout), including the pinned-commit check. The report still renders
@@ -139,7 +140,7 @@ def classify(t: Target, latest: str | None, api_code: int = 200, pin_code: int =
     is never read as "current".
     """
     if pin_code in MISSING:
-        return Row(t, latest or "?", "pinned commit gone upstream; rebuild only from the source mirror", True)
+        return Row(t, latest or "?", "pinned commit gone upstream; the recipe cannot be rebuilt until the pin moves", True)
     if api_code != 200:
         return Row(t, "?", f"upstream did not answer ({_answer(api_code)}); see the workflow log", True)
     if pin_code != 200:
