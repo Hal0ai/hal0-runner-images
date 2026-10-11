@@ -47,8 +47,8 @@ key), `.version` (the tag), `.source`, `.revision`, `.description`,
    moving it.
 2. Edit only the manifest (and `requirements.txt` / `constraints.txt` or
    `patches/` when they change). A llama.cpp bump edits `runners/llama.cpp.toml`
-   only; it rebuilds `standard` and `cpu`, and `cuda` follows once ggml-org has
-   published `server-cuda-<version>`.
+   only; it rebuilds `standard` and `cpu`. `cuda` in `images.json` moves to the
+   newest `server-cuda-b<N>` ggml-org has published with N <= the new release.
 3. Check it:
 
    ```

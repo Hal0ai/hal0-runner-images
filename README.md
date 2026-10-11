@@ -19,12 +19,14 @@ One name per runner, used everywhere: the hal0 runner key, the catalogue
 | `moonshine` | Moonshine transcription | speech-to-text on the CPU | useful-moonshine-onnx `20251121` | default |
 | `comfyui` | ComfyUI | image and video generation on the GPU (ROCm) | Comfy-Org/ComfyUI `0.28.0` (commit `c9602625`) | default |
 | `qwen3tts` | Qwen3 TTS | multilingual text-to-speech on the GPU (ROCm) | qwen-tts `0.1.1` | optional |
-| `cuda` | NVIDIA CUDA | llama.cpp on NVIDIA GPUs | ggml-org's own `server-cuda-<release>` image (not built here) | optional |
+| `cuda` | NVIDIA CUDA | llama.cpp on NVIDIA GPUs | ggml-org's own image `server-cuda-b11541` (not built here) | optional |
 
 `standard` is the default for AMD GPUs: unmodified upstream llama.cpp at a
 tagged release with one small patch, ROCm 10.0 and Vulkan (RADV) in one
-image. `standard`, `cpu` and `cuda` share one llama.cpp release, pinned in
-`runners/llama.cpp.toml`, so one change moves all three.
+image. `standard` and `cpu` share one llama.cpp release, pinned in
+`runners/llama.cpp.toml`, so one change moves both. `cuda` is ggml-org's own
+CUDA image; ggml-org does not publish one for every release, so `cuda` pins
+the newest `server-cuda-b<N>` that is not newer than that release.
 
 ## Tags
 

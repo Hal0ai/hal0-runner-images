@@ -133,12 +133,9 @@
       "title": "NVIDIA CUDA",
       "summary": "llama.cpp for NVIDIA GPUs. Pick it on a box with an NVIDIA card.",
       "image": "ghcr.io/ggml-org/llama.cpp",
-      "tag": null,
-      "digest": null,
-      "candidate": {
-        "tag": "server-cuda-b11541",
-        "digest": "sha256:f88fa8d94d872312a4ad117acd490fa997bef81f03f161f0cfe0d74272e5b5bb"
-      },
+      "tag": "server-cuda-b11541",
+      "digest": "sha256:f88fa8d94d872312a4ad117acd490fa997bef81f03f161f0cfe0d74272e5b5bb",
+      "candidate": null,
       "gate_report": null,
       "lanes_gated": [],
       "backends": [
@@ -147,7 +144,7 @@
       "family": "llama-server",
       "tier": "optional",
       "recipe": null,
-      "maintainer_notes": "External: ggml-org's official CUDA server image, not built here. It follows runners/llama.cpp.toml: pin ghcr.io/ggml-org/llama.cpp:server-cuda-<version> once ggml-org has published it for that release. ggml-org does not publish a CUDA image for every release; there is none for b11552, so the candidate is the newest one not ahead of the pin (b11541). The CUDA lane is hidden in hal0 (hal0 #2362)."
+      "maintainer_notes": "External: ggml-org's official CUDA server image, not built here. ggml-org does not publish a server-cuda image for every llama.cpp release, so cuda pins the newest server-cuda-b<N> tag with N <= the release in runners/llama.cpp.toml (b11541 for b11552). Not hardware-gated (lanes_gated stays []): the CUDA lane is hidden in hal0 (hal0 #2362)."
     }
   ]
 }

@@ -1,9 +1,9 @@
 # The one llama.cpp release every llama.cpp runner uses.
 #
 # runners/standard and runners/cpu build from this pin ([source].pin in their
-# manifests), and the external `cuda` entry in images.json follows it with
-# ggml-org's own ghcr.io/ggml-org/llama.cpp:server-cuda-<version> image. One
-# change to this file moves all three. The weekly release watch rewrites it
+# manifests). The external `cuda` entry in images.json follows it loosely:
+# ggml-org does not publish a server-cuda image for every release, so cuda pins
+# the newest ghcr.io/ggml-org/llama.cpp:server-cuda-b<N> with N <= version. The weekly release watch rewrites it
 # when ggml-org publishes a newer bNNNNN release.
 
 [llama_cpp]

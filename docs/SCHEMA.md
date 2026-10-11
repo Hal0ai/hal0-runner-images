@@ -42,7 +42,7 @@ exactly these fields, in this order:
 | `image` | string | The image repository, without a tag. `ghcr.io/hal0ai/hal0-runner-<id>` for every runner built here. |
 | `tag` | string or null | The tag of the build hal0 should pin, `<upstream version>-r<recipe sha7>`. `null` until a build has passed the gate. |
 | `digest` | string or null | `sha256:<64 hex>` of that tag. `null` until gated. A digest always comes with its tag. |
-| `candidate` | object or null | `{"tag": …, "digest": …}` of a build that is published but not yet gated. CI's build sets it; promotion moves it to `tag`/`digest` and sets it back to `null`. For `cuda`, the ggml-org image waiting to be pinned. |
+| `candidate` | object or null | `{"tag": …, "digest": …}` of a build that is published but not yet gated. CI's build sets it; promotion moves it to `tag`/`digest` and sets it back to `null`. |
 | `gate_report` | string or null | https URL of the hardware gate report for `digest`. `null` until gated. |
 | `lanes_gated` | list of strings | The `backends` that passed the gate for `digest`, e.g. `["rocm", "vulkan"]`. `[]` until gated. hal0 admits a runner to a lane (for example Vulkan) only when the lane is listed here. |
 | `backends` | list of strings | What the runner can execute: any of `rocm`, `vulkan`, `cpu`, `npu`, `cuda`. |
@@ -62,8 +62,12 @@ exactly these fields, in this order:
   a gated build is promoted (docs/UPDATING.md). `lanes_gated` is a subset of
   `backends`, and a non-empty `lanes_gated` needs `digest` and `gate_report`.
 - For a built runner, `tag` and `candidate.tag` are `<version>-r<sha7>`.
-- `cuda` follows `runners/llama.cpp.toml`: its tags are ggml-org's
-  `server-cuda-b<release>` and never ahead of that release.
+- `cuda` follows `runners/llama.cpp.toml`, but not to the exact release:
+  ggml-org does not publish a `server-cuda-b<N>` image for every llama.cpp
+  release, so `cuda` pins the **newest published `server-cuda-b<N>` with
+  N <= the shared release** (for b11552 that is `server-cuda-b11541`). Its tag
+  and digest are set without a hardware gate, because the CUDA lane is hidden
+  in hal0; `lanes_gated` stays `[]`.
 - An external entry cannot use a `hal0-runner-` image name.
 - No other fields. Prose goes in `maintainer_notes` or the recipe's manifest.
 
