@@ -1,0 +1,135 @@
+name: Release watch
+
+# Weekly: look for newer upstream releases (docs/UPDATING.md, step 1).
+#
+#   standard + cpu  both pin one ggml-org/llama.cpp release. If a newer one
+#                   exists this opens ONE bump PR editing both recipes'
+#                   manifest.toml and Containerfile ARGs together.
+#   everything else report only: one tracking issue lists newer upstream versions.
+#
+# The bump PR is an ordinary PR: build.yml builds it with push=false, a person
+# merges it, and the merge builds the immutable tag. Nothing here builds,
+# pushes, pins or merges.
+#
+# SECRET (optional but needed for CI on the bump PR): RUNNER_IMAGES_PR_TOKEN, a
+# fine-grained PAT (or GitHub App token) with Contents + Pull requests: write on
+# this repository. PRs opened with the default GITHUB_TOKEN do not trigger
+# build.yml, so without the secret the bump PR gets no CI run. The fallback
+# works but the job warns, and the repository setting "Allow GitHub Actions to
+# create and approve pull requests" must be on.
+
+on:
+  schedule:
+    - cron: "17 6 * * 1" # Mondays 06:17 UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Report only: do not open or change any PR"
+        type: boolean
+        default: false
+
+concurrency:
+  group: release-watch
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    env:
+      GH_TOKEN: ${{ secrets.RUNNER_IMAGES_PR_TOKEN || github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
+      TRACKING_TITLE: "Runner upstream watch"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          token: ${{ secrets.RUNNER_IMAGES_PR_TOKEN || github.token }}
+
+      - name: Check upstream releases and prepare the bump
+        run: |
+          set -euo pipefail
+          apply=()
+          if [[ "${{ inputs.dry_run }}" != "true" ]]; then apply=(--apply); fi
+          python3 ci/release_watch.py "${apply[@]}" \
+            --report-file "$RUNNER_TEMP/report.md" --json-file "$RUNNER_TEMP/result.json"
+          cat "$RUNNER_TEMP/report.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Update the tracking issue
+        if: inputs.dry_run != true
+        run: |
+          set -euo pipefail
+          {
+            cat "$RUNNER_TEMP/report.md"
+            echo
+            echo "_Updated $(date -u +%Y-%m-%dT%H:%MZ) by [run ${GITHUB_RUN_ID}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})._"
+          } > "$RUNNER_TEMP/issue.md"
+          num="$(gh issue list --state open --search "\"$TRACKING_TITLE\" in:title" \
+                   --json number,title --jq 'map(select(.title == env.TRACKING_TITLE)) | .[0].number // empty')"
+          if [[ -n "$num" ]]; then
+            gh issue edit "$num" --body-file "$RUNNER_TEMP/issue.md"
+          else
+            gh issue create --title "$TRACKING_TITLE" --body-file "$RUNNER_TEMP/issue.md"
+          fi
+
+      - name: Open the bump PR
+        if: inputs.dry_run != true
+        run: |
+          set -euo pipefail
+          tag="$(jq -r '.bump.tag // empty' "$RUNNER_TEMP/result.json")"
+          if [[ -z "$tag" ]]; then echo "nothing to bump"; exit 0; fi
+          if [[ -z "${{ secrets.RUNNER_IMAGES_PR_TOKEN }}" ]]; then
+            echo "::warning::RUNNER_IMAGES_PR_TOKEN is not set: the bump PR will not get a build.yml run until it is closed and reopened by a person."
+          fi
+
+          runners="$(jq -r '.bump.runners | join(", ")' "$RUNNER_TEMP/result.json")"
+          branch="bot/bump-llama-cpp-${tag}"
+
+          # At most one open bump PR: reuse this tag's, close older ones as superseded.
+          open="$(gh pr list --state open --json number,headRefName --jq '.[] | select(.headRefName | startswith("bot/bump-llama-cpp-")) | "\(.number) \(.headRefName)"')"
+          while read -r num head; do
+            [[ -n "$num" ]] || continue
+            if [[ "$head" == "$branch" ]]; then echo "PR #$num already open for ${tag}"; exit 0; fi
+            gh pr close "$num" --delete-branch --comment "Superseded by the bump to ${tag}."
+          done <<<"$open"
+
+          if git diff --quiet; then echo "no file changes after rewrite"; exit 1; fi
+          git config user.name  "hal0-runner-images-bot"
+          git config user.email "bot@hal0.local"
+          git checkout -b "$branch"
+          git add -A runners
+          git commit -s -m "chore(runners): bump llama.cpp to ${tag} (${runners})"
+          git push origin "$branch"
+
+          python3 - "$RUNNER_TEMP/result.json" > "$RUNNER_TEMP/pr.md" <<'PY'
+          import json, sys
+          b = json.load(open(sys.argv[1]))["bump"]
+          print(f"Bumps the shared llama.cpp pin to [`{b['tag']}`]({b['url']}) (`{b['commit'][:12]}`).")
+          print()
+          print("| runner | was | now |\n|---|---|---|")
+          for k in b["runners"]:
+              print(f"| `{k}` | `{b['previous'][k]}` | `{b['tag']}` |")
+          print()
+          print(f"Upstream changes: {b['compare_url']}")
+          print()
+          print("`manifest.toml` and the Containerfile `ARG` defaults are changed together.")
+          print()
+          print("## Before merging")
+          print()
+          print("- [ ] Read the upstream diff for changes to flags, defaults, API or chat templating")
+          print("- [ ] `build.yml` is green: it builds both images with `push=false`")
+          print()
+          print("## After merging")
+          print()
+          print("Merging builds and pushes the immutable tags and posts the candidate digests on the merge commit. "
+                "Then run the hardware gate on each digest and promote it (docs/UPDATING.md). "
+                "Until a promote PR lands, nothing that hal0 pulls changes.")
+          PY
+          gh pr create --base main --head "$branch" \
+            --title "chore(runners): bump llama.cpp to ${tag}" --body-file "$RUNNER_TEMP/pr.md"

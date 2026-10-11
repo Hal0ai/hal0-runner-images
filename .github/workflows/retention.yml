@@ -24,13 +24,14 @@ name: GHCR retention sweep
 # may still 403 on github.token depending on org visibility settings, so
 # an empty/failed report there is expected, not a bug.
 #
-# Sync note: hal0's code pins (DEFAULT_ROCMFPX_IMAGE /
-# VULKAN_CAPABLE_IMAGE_REFS in src/hal0/config/schema.py) reach the sweep
-# two ways, unioned: retention.py fetches hal0's machine-readable export
-# (exports/runner-image-pins.json on Hal0ai/hal0 main) at run start, and
+# Sync note: hal0's runner pins reach the sweep two ways, unioned:
+# retention.py fetches hal0's machine-readable pin export at run start, and
 # retention-allowlist.json's hal0_code_pins stays as a manually-maintained
-# local floor. Any fetch/parse failure of the export — 404 included —
-# aborts the run (dry-run and delete alike) before anything is planned.
+# local floor. Any fetch/parse failure of the export, 404 included, aborts the
+# run (dry-run and delete alike) before anything is planned. Digests that
+# build.yml pushed but promote.yml has not pinned yet are not protected by
+# either source. They stay safe because retention.py leaves anything it cannot
+# classify alone, and <version>-r<sha7> tags are unclassified.
 
 on:
   workflow_dispatch:
