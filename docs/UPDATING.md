@@ -122,9 +122,9 @@ Every item is verified first, and nothing is opened unless all of them pass:
 
 Then it opens two PRs, one each however many runners were promoted, and merges neither:
 
-- **this repo:** `images.json` gets each runner's `tag` and `digest`, its
-  `candidate` is cleared, and `gate_report` and `lanes_gated` are set from the
-  report (the lanes whose `passed` is true);
+- **this repo:** `images.json` gets each runner's `tag` and `digest`. If the entry
+  has them, `candidate` is cleared and `gate_report` and `lanes_gated` are set
+  from the report (the lanes whose `passed` is true);
 - **Hal0ai/hal0:** those runners' rows in the pin table of `manifest.json`, and no
   other file (the job aborts if anything else changed).
 
@@ -172,5 +172,6 @@ Defined in the docstring of `ci/lib.py`. If the layout changes, change it there.
   Promote reads the tag from it.
 - `runners/llama.cpp.toml` holds the shared pin (`[llama_cpp]` `version`, `ref`);
   the constants are at the top of `ci/release_watch.py`.
-- `images.json` is `hal0.runner-images.v2`: a `runners` array keyed by `key`, with
-  `image`, `tag`, `digest`, `candidate`, `gate_report`, `lanes_gated`.
+- `images.json` is `hal0.runner-images.v2`: a `runners` array keyed by `id`, with
+  `image`, `tag` and `digest` (null until gated). Promote also clears `candidate`
+  and sets `gate_report` and `lanes_gated`, on entries that have those fields.

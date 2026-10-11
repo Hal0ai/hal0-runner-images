@@ -49,12 +49,14 @@ from hal0_pins import HAL0_FIELDS, HAL0_PIN_FILE, HAL0_PIN_TABLE, hal0_row  # no
 
 # ---------------------------------------------------------------------------
 # images.json (this repo), schema hal0.runner-images.v2: a `runners` array of
-# entries keyed by `key`. promote writes tag and digest, clears `candidate`, and
-# sets gate_report and lanes_gated from the gate report. Nothing else.
+# entries keyed by `id` (`key` is accepted too). promote always writes tag and
+# digest. It writes candidate (cleared), gate_report and lanes_gated only on an
+# entry that already has those fields, so it never invents a field the schema
+# check may not know. Nothing else is touched.
 # ---------------------------------------------------------------------------
 CATALOGUE_FILE = "images.json"
 CATALOGUE_LIST_KEY = "runners"
-CATALOGUE_ID_KEY = "key"
+CATALOGUE_ID_KEYS = ("id", "key")
 
 SIGNER_WORKFLOW = f"{lib.REPO_SLUG}/.github/workflows/build.yml"
 SOURCE_REF = "refs/heads/main"
@@ -82,7 +84,7 @@ def catalogue_entries(doc: dict) -> list:
 
 
 def catalogue_entry(doc: dict, key: str) -> dict:
-    matches = [e for e in catalogue_entries(doc) if e.get(CATALOGUE_ID_KEY) == key]
+    matches = [e for e in catalogue_entries(doc) if any(e.get(k) == key for k in CATALOGUE_ID_KEYS)]
     if len(matches) != 1:
         raise lib.CIError(f"{CATALOGUE_FILE}: expected exactly one entry for {key!r}, found {len(matches)}")
     return matches[0]
@@ -96,9 +98,10 @@ def edit_catalogue(raw: str, items: list[dict]) -> str:
             raise lib.CIError(f"{CATALOGUE_FILE}: entry image {entry['image']!r} != {item['image']!r}")
         entry["tag"] = item["tag"]
         entry["digest"] = item["digest"]
-        entry["candidate"] = None
-        entry["gate_report"] = item["gate_report"]
-        entry["lanes_gated"] = item["lanes_gated"]  # lanes are admitted by evidence
+        for field, value in (("candidate", None), ("gate_report", item["gate_report"]),
+                             ("lanes_gated", item["lanes_gated"])):  # lanes are admitted by evidence
+            if field in entry:
+                entry[field] = value
     return dump_like(doc, raw)
 
 

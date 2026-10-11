@@ -14,7 +14,7 @@ stops holding, adjust it here and in docs/UPDATING.md):
                                 org.opencontainers.image.version must equal the tag
   runners/llama.cpp.toml        the ONE llama.cpp release pin shared by standard,
                                 cpu (and the external cuda entry); see release_watch.py
-  images.json                   hal0.runner-images.v2, runners[] keyed by `key`
+  images.json                   hal0.runner-images.v2, runners[] keyed by `id`
 """
 
 from __future__ import annotations

@@ -236,6 +236,13 @@ class PromoteTests(unittest.TestCase):
         self.assertEqual(cpu, {"key": "cpu", "image": "ghcr.io/hal0ai/hal0-runner-cpu", "tag": "t", "candidate": None})
         self.assertTrue(promote.edit_catalogue(raw, [self.RESULT]).endswith("}\n"))
 
+    def test_catalogue_without_optional_fields_gets_only_tag_and_digest(self):
+        raw = json.dumps({"schema": "hal0.runner-images.v2", "runners": [
+            {"id": "standard", "image": self.RESULT["image"], "tag": None, "digest": None, "title": "Standard"}]}, indent=2) + "\n"
+        row = json.loads(promote.edit_catalogue(raw, [self.RESULT]))["runners"][0]
+        self.assertEqual(row, {"id": "standard", "image": self.RESULT["image"], "tag": self.RESULT["tag"],
+                               "digest": DIGEST, "title": "Standard"})
+
     def test_edit_catalogue_rejects_unknown_or_mismatched_runner(self):
         raw = json.dumps({"runners": [{"key": "cpu", "image": "ghcr.io/hal0ai/hal0-runner-cpu"}]})
         with self.assertRaises(SystemExit):
