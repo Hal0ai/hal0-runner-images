@@ -11,6 +11,7 @@ from __future__ import annotations
 import io
 import json
 import math
+import shutil
 import struct
 import subprocess
 import sys
@@ -291,6 +292,15 @@ class ParserTests(unittest.TestCase):
         nodes = ("Import times for custom nodes:\n   0.0 seconds: /opt/ComfyUI/custom_nodes/ComfyUI_essentials\n"
                  "   0.2 seconds (IMPORT FAILED): /opt/ComfyUI/custom_nodes/ComfyUI-GGUF\n")
         self.assertEqual(gate.custom_node_status(nodes), {"ComfyUI_essentials": True, "ComfyUI-GGUF": False})
+        # ComfyUI 0.28 prefixes each line with a coloured log level, even when not on a tty
+        colored = ("\x1b[32m[INFO]\x1b[0m Import times for custom nodes:\n"
+                   "\x1b[32m[INFO]\x1b[0m    0.0 seconds: /opt/ComfyUI/custom_nodes/websocket_image_save.py\n"
+                   "\x1b[32m[INFO]\x1b[0m    0.0 seconds: /opt/ComfyUI/custom_nodes/ComfyUI-AMDGPUMonitor\n"
+                   "\x1b[32m[INFO]\x1b[0m    0.0 seconds (IMPORT FAILED): /opt/ComfyUI/custom_nodes/ComfyUI-GGUF\n"
+                   "\x1b[32m[INFO]\x1b[0m    0.1 seconds: /opt/ComfyUI/custom_nodes/ComfyUI_essentials\n")
+        self.assertEqual(gate.custom_node_status(colored),
+                         {"websocket_image_save.py": True, "ComfyUI-AMDGPUMonitor": True,
+                          "ComfyUI-GGUF": False, "ComfyUI_essentials": True})
         png = b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\x0dIHDR" + struct.pack(">II", 1024, 768) + b"\x08\x02"
         self.assertEqual(gate.png_size(png), (1024, 768))
         self.assertAlmostEqual(gate.word_recall("Ask not what your country", "ask NOT what your county"), 0.8)
@@ -643,7 +653,8 @@ class GateRunTests(unittest.TestCase):
             toml = Path(d) / "gate-models.toml"
             toml.write_text(f'[models]\n"lfm2.5-2.6b" = "{self.models.entries["lfm2.5-2.6b"]["path"]}"\n')
             out = Path(d) / "r.json"
-            rc = gate.main(["cpu", "--digest", D1, "--models", str(toml), "--out", str(out)], host=host)
+            rc = gate.main(["cpu", "--digest", D1, "--models", str(toml), "--out", str(out)], host=host,
+                           tree_check=lambda: [])
             text = out.read_text()
         self.assertEqual(rc, 0)
         self.assertNotIn(self.tmp.name, text)
@@ -651,6 +662,99 @@ class GateRunTests(unittest.TestCase):
         self.assertTrue(promote_accepts(doc, "cpu", D1))
         self.assertEqual(promote.parse_gate_reports("https://github.com/x/y/releases/download/t/r.json", ["cpu"]),
                          {"cpu": "https://github.com/x/y/releases/download/t/r.json"})
+
+
+    def test_cli_refuses_a_dirty_tree_before_touching_the_host(self):
+        host = self.cpu_host()
+        locked = []
+        host.lock = lambda: locked.append(True)
+        with tempfile.TemporaryDirectory() as d:
+            toml = Path(d) / "gate-models.toml"
+            toml.write_text(f'[models]\n"lfm2.5-2.6b" = "{self.models.entries["lfm2.5-2.6b"]["path"]}"\n')
+            out = Path(d) / "r.json"
+            with self.assertRaises(gate.GateError) as cm:
+                gate.main(["cpu", "--digest", D1, "--models", str(toml), "--out", str(out)], host=host,
+                          tree_check=lambda: [" M gates/cpu.toml", "?? scripts/extra.py"])
+            self.assertFalse(out.exists())
+            # --plan runs nothing, so it is allowed on a dirty tree
+            rc = gate.main(["cpu", "--plan", "--models", str(toml)], host=host,
+                           tree_check=lambda: [" M gates/cpu.toml"])
+        self.assertIn("gates/cpu.toml", cm.exception.msg)
+        self.assertIn("scripts/extra.py", cm.exception.msg)
+        self.assertEqual((locked, host.calls), ([], []))
+        self.assertEqual(rc, 0)
+
+    def test_tree_problems_lists_changes_under_the_guarded_paths(self):
+        seen = []
+
+        def run(argv, **kw):
+            seen.append(argv)
+            return subprocess.CompletedProcess(argv, 0, " M gates/standard.toml\n?? ci/new.py\n", "")
+        self.assertEqual(gate.tree_problems(run), [" M gates/standard.toml", "?? ci/new.py"])
+        self.assertEqual(seen[0][:6], ["git", "-C", str(gate.ROOT), "status", "--porcelain", "--untracked-files=all"])
+        self.assertEqual(seen[0][-3:], ["gates", "scripts", "ci"])
+        clean = lambda argv, **kw: subprocess.CompletedProcess(argv, 0, "", "")
+        self.assertEqual(gate.tree_problems(clean), [])
+        broken = lambda argv, **kw: subprocess.CompletedProcess(argv, 128, "", "fatal: not a git repository")
+        self.assertIn("not a git repository", gate.tree_problems(broken)[0])
+
+        def missing(argv, **kw):
+            raise FileNotFoundError("git")
+        self.assertIn("git is not available", gate.tree_problems(missing)[0])
+
+    def test_git_environment_drops_every_repository_override(self):
+        env = gate.git_environment({"PATH": "/bin", "HOME": "/h", "GIT_DIR": "/x/.git", "GIT_WORK_TREE": "/x",
+                                    "GIT_INDEX_FILE": "/x/i", "GIT_OBJECT_DIRECTORY": "/o",
+                                    "GIT_ALTERNATE_OBJECT_DIRECTORIES": "/a", "GIT_COMMON_DIR": "/c",
+                                    "GIT_CEILING_DIRECTORIES": "/", "GIT_CONFIG_COUNT": "1",
+                                    "GIT_CONFIG_KEY_0": "core.worktree", "GIT_CONFIG_VALUE_0": "/x",
+                                    "GIT_CONFIG_PARAMETERS": "'core.worktree'='/x'"})
+        self.assertEqual(env, {"PATH": "/bin", "HOME": "/h", "GIT_OPTIONAL_LOCKS": "0"})
+
+    def test_a_hostile_git_environment_cannot_vouch_for_this_checkout(self):
+        """GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE pointing at a clean repository
+        must not make a dirty checkout look clean or change the revision."""
+        import os
+        if shutil.which("git") is None:
+            self.skipTest("git is not installed")
+        clean_env = gate.git_environment()
+
+        def sh(cwd, *args):
+            return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                                   "-c", "commit.gpgsign=false", *args], cwd=cwd, env=clean_env,
+                                  capture_output=True, text=True, check=True).stdout.strip()
+
+        with tempfile.TemporaryDirectory() as d:
+            mine, other = Path(d) / "mine", Path(d) / "other"
+            for repo in (mine, other):
+                (repo / "gates").mkdir(parents=True)
+                (repo / "gates" / "cpu.toml").write_text(repo.name)
+                sh(repo, "init", "-q")
+                sh(repo, "add", "-A")
+                sh(repo, "commit", "-q", "-m", repo.name)
+            (mine / "gates" / "cpu.toml").write_text("edited, not committed")
+            want_rev = sh(mine, "rev-parse", "HEAD")
+            hostile = {"GIT_DIR": str(other / ".git"), "GIT_WORK_TREE": str(other),
+                       "GIT_INDEX_FILE": str(other / ".git" / "index"),
+                       "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.worktree", "GIT_CONFIG_VALUE_0": str(other)}
+            saved_root, saved_env = gate.ROOT, {k: os.environ.get(k) for k in hostile}
+            gate.ROOT = mine
+            os.environ.update(hostile)
+            try:
+                # unsanitised git would answer for `other`: clean, and its revision
+                leaked = subprocess.run(["git", "-C", str(mine), "status", "--porcelain"],
+                                        capture_output=True, text=True).stdout
+                self.assertEqual(leaked.strip(), "")
+                self.assertEqual(gate.tree_problems(), [" M gates/cpu.toml"])
+                self.assertEqual(gate.git_revision(), want_rev)
+                self.assertNotEqual(want_rev, sh(other, "rev-parse", "HEAD"))
+            finally:
+                gate.ROOT = saved_root
+                for k, v in saved_env.items():
+                    if v is None:
+                        os.environ.pop(k, None)
+                    else:
+                        os.environ[k] = v
 
 
 class CheckTests(unittest.TestCase):

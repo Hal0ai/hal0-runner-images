@@ -118,6 +118,11 @@ so that changing a probe never changes an image tag. For each runner it:
    it removes only `gate-<key>-<pid>-*` containers whose run (`<pid>`) no longer
    exists, so a live run's containers are never touched.
 
+The report records the checkout's commit as `gate.revision`, so the gate
+refuses to run (exit 2) while `git status` shows any changed, staged or
+untracked file under `gates/`, `scripts/` or `ci/`. Commit or discard the
+change first; `--plan` still runs on a dirty tree.
+
 One gate runs per host. Every run takes a lock on one fixed path,
 `/run/lock/hal0-gate.lock`, never a per-user or `/tmp` location. The gate runs
 as root, and another user could pre-create, swap or delete a file there. It

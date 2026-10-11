@@ -715,9 +715,13 @@ def draft_stats(timings: dict, logs: str) -> tuple[int | None, int | None]:
 
 
 def custom_node_status(logs: str) -> dict[str, bool]:
-    """ComfyUI's "Import times for custom nodes" lines: name -> imported."""
+    """ComfyUI's "Import times for custom nodes" lines: name -> imported.
+
+    ComfyUI 0.28 prefixes every log line with a coloured level, `\\x1b[32m[INFO]\\x1b[0m`,
+    even when stdout is not a terminal; the escapes are stripped and the level skipped."""
     out: dict[str, bool] = {}
-    for m in re.finditer(r"^\s*[0-9.]+ seconds( \(IMPORT FAILED\))?: (.+?)\s*$", logs, re.M):
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", logs)
+    for m in re.finditer(r"^(?:\[[A-Z]+\])?\s*[0-9.]+ seconds( \(IMPORT FAILED\))?: (.+?)\s*$", plain, re.M):
         out[Path(m.group(2)).name] = not m.group(1)
     return out
 
@@ -1972,15 +1976,54 @@ def utc_now() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
 
 
-def git_revision() -> str:
+#: The files a report's gate.revision vouches for: the probes, this script and
+#: promote's validator. A change to any of them that is not committed would
+#: make the report claim a revision whose probes it did not run.
+GUARDED_PATHS = ("gates", "scripts", "ci")
+
+
+def git_environment(env: dict[str, str] | None = None) -> dict[str, str]:
+    """The caller's environment without any GIT_* variable. GIT_DIR,
+    GIT_WORK_TREE, GIT_INDEX_FILE, GIT_OBJECT_DIRECTORY,
+    GIT_ALTERNATE_OBJECT_DIRECTORIES, GIT_COMMON_DIR, GIT_CEILING_DIRECTORIES,
+    GIT_CONFIG_* (which can set core.worktree) and the like can point git at
+    another repository, index or work tree. Then a clean answer about some
+    other tree would let a dirty checkout run and record the wrong revision.
+    Both checks below only read, so none of those variables is needed."""
+    out = {k: v for k, v in (os.environ if env is None else env).items() if not k.startswith("GIT_")}
+    out["GIT_OPTIONAL_LOCKS"] = "0"  # git status must not take index.lock
+    return out
+
+
+def git(*args: str) -> list[str]:
+    """argv for git on this checkout, whatever the current directory."""
+    return ["git", "-C", str(ROOT), *args]
+
+
+def tree_problems(run: Callable = subprocess.run) -> list[str]:
+    """Why this checkout cannot vouch for gate.revision: every changed, staged or
+    untracked file under GUARDED_PATHS (ignored files such as __pycache__ do
+    not count), or why git could not tell. Empty when the tree is clean."""
     try:
-        cp = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True)
+        cp = run(git("status", "--porcelain", "--untracked-files=all", "--", *GUARDED_PATHS),
+                 cwd=ROOT, env=git_environment(), capture_output=True, text=True)
+    except OSError as e:
+        return [f"git is not available: {e}"]
+    if cp.returncode != 0:
+        return [f"git status failed (not a checkout of this repository?): {clip(cp.stderr or cp.stdout)}"]
+    return [line.rstrip() for line in cp.stdout.splitlines() if line.strip()]
+
+
+def git_revision(run: Callable = subprocess.run) -> str:
+    try:
+        cp = run(git("rev-parse", "HEAD"), cwd=ROOT, env=git_environment(), capture_output=True, text=True)
     except OSError:
         return ""
     return cp.stdout.strip() if cp.returncode == 0 else ""
 
 
-def main(argv: list[str] | None = None, host: Host | None = None) -> int:
+def main(argv: list[str] | None = None, host: Host | None = None,
+         tree_check: Callable[[], list[str]] = tree_problems) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("key", nargs="?", help="runner key (runners/<key>)")
     ap.add_argument("--group", help="gate every runner of a shared pin, e.g. llama.cpp (standard + cpu)")
@@ -2016,6 +2059,14 @@ def main(argv: list[str] | None = None, host: Host | None = None) -> int:
             Gate(k, digests.get(k, "sha256:<digest>"), tags.get(k), models, host or Host(args.podman, False),
                  args.headroom_gib, plan_only=True).run()
         return 0
+
+    problems = tree_check()
+    if problems:
+        shown = "\n  ".join(problems[:20]) + ("\n  ..." if len(problems) > 20 else "")
+        raise GateError("refusing to run: the report records the commit of this checkout as "
+                        "gate.revision, but these files under " + ", ".join(f"{p}/" for p in GUARDED_PATHS)
+                        + f" differ from it:\n  {shown}\n"
+                        "commit or discard them first (--plan runs on a dirty tree)")
 
     host = host or Host(args.podman)
 
