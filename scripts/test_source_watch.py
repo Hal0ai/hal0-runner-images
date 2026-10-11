@@ -54,6 +54,11 @@ def test_classify() -> None:
          200, 200, "current", False),
         (PY, "0.5.0", 200, 200, "newer release available", False),
         (PY, None, 404, 200, "upstream did not answer", True),
+        # A failed pinned-commit probe is an alert, never "current" (Codex P2 on #15).
+        (GH, "b100", 200, 500, "could not check the pinned commit (HTTP 500)", True),
+        (GH, "b100", 200, 403, "could not check the pinned commit (HTTP 403)", True),
+        (GH, "b100", 200, sw.NO_ANSWER, "could not check the pinned commit (no answer", True),
+        (GH, None, sw.NO_ANSWER, 200, "upstream did not answer (no answer", True),
     ]
     for t, latest, api, pin, state, alert in cases:
         r = sw.classify(t, latest, api, pin)
@@ -91,8 +96,75 @@ def test_render() -> None:
     check("⚠️ upstream did not answer" in out, "render: alert row not marked")
 
 
+def test_transport_errors() -> None:
+    """DNS/connection/timeout failures become alert rows; nothing raises (Codex P2 on #15)."""
+    import socket
+    import urllib.error
+    import urllib.request
+
+    real = urllib.request.urlopen
+    for exc in (urllib.error.URLError(socket.gaierror(-2, "Name or service not known")),
+                ConnectionRefusedError(111, "Connection refused"),
+                TimeoutError("timed out")):
+        def boom(*_a, _exc=exc, **_k):
+            raise _exc
+        urllib.request.urlopen = boom
+        try:
+            rows = [sw.probe(GH), sw.probe(PY)]
+        except Exception as e:  # noqa: BLE001 - the point is that nothing escapes
+            failures.append(f"probe raised {e!r} on {exc!r}")
+            continue
+        finally:
+            urllib.request.urlopen = real
+        for r in rows:
+            check(r.alert and "no answer" in r.state, f"{exc!r}: {r.target.key} -> {r.state!r}/{r.alert}")
+        out = sw.render(rows)
+        check("**2 alert(s).**" in out, f"{exc!r}: render must still produce the report")
+
+
+def test_truncated_bodies() -> None:
+    """A response cut off mid-body becomes an alert row, not a crash (CodeRabbit on #17)."""
+    import http.client
+    import io
+    import urllib.request
+
+    class Resp(io.BytesIO):
+        status = 200
+
+        def __init__(self, data: bytes = b"", exc: Exception | None = None):
+            super().__init__(data)
+            self._exc = exc
+
+        def read(self, *a):
+            if self._exc is not None:
+                raise self._exc
+            return super().read(*a)
+
+    cases = {
+        "IncompleteRead": lambda: Resp(exc=http.client.IncompleteRead(b'{"info": {"vers', 40)),
+        "partial JSON": lambda: Resp(b'{"info": {"version": "0.4'),
+    }
+    real = urllib.request.urlopen
+    for name, make in list(cases.items()) + [("RemoteDisconnected", None)]:
+        def fake(*_a, _make=make, **_k):
+            if _make is None:
+                raise http.client.RemoteDisconnected("Remote end closed connection without response")
+            return _make()
+        urllib.request.urlopen = fake
+        try:
+            rows = [sw.probe(GH), sw.probe(PY)]
+        except Exception as e:  # noqa: BLE001 - the point is that nothing escapes
+            failures.append(f"{name}: probe raised {e!r}")
+            continue
+        finally:
+            urllib.request.urlopen = real
+        for r in rows:
+            check(r.alert and "no answer" in r.state, f"{name}: {r.target.key} -> {r.state!r}/{r.alert}")
+
+
 def main() -> int:
-    for t in (test_newest_release, test_classify, test_targets, test_render):
+    for t in (test_newest_release, test_classify, test_targets, test_render, test_transport_errors,
+              test_truncated_bodies):
         before = len(failures)
         t()
         print(f"{'FAIL' if len(failures) > before else 'ok  '} {t.__name__}")
