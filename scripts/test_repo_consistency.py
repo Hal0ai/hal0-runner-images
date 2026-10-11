@@ -13,8 +13,8 @@ No network, no container runtime. Checks:
   * every Containerfile takes its base images from manifest build args pinned
     by digest, declares no pin defaults of its own, and clones no branch;
   * Python dependency files pin exact versions;
-  * runners/cpu and runners/standard pin the same llama.cpp release, and the
-    external cuda entry does not run ahead of it;
+  * runners/standard and runners/cpu take llama.cpp from runners/llama.cpp.toml,
+    and the external cuda entry does not run ahead of that release;
   * no retired names or in-image paths in the recipes, scripts or catalogue;
   * retention-allowlist.json refs parse; no private LAN addresses anywhere.
 """
@@ -38,8 +38,8 @@ from retention import parse_allowlist_ref  # noqa: E402
 FAMILIES = {"llama-server", "flm", "kokoro", "qwen3tts", "moonshine", "comfyui"}
 BACKENDS = {"rocm", "vulkan", "cpu", "npu", "cuda"}
 TIERS = {"default", "optional"}
-ENTRY_FIELDS = ["id", "title", "summary", "image", "tag", "digest", "backends", "family", "tier",
-                "recipe", "maintainer_notes"]
+ENTRY_FIELDS = ["id", "title", "summary", "image", "tag", "digest", "candidate", "gate_report",
+                "lanes_gated", "backends", "family", "tier", "recipe", "maintainer_notes"]
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 PINNED_IMAGE = re.compile(r"^[A-Za-z0-9._\-/:]+@sha256:[0-9a-f]{64}$")
 TRACK_KINDS = {"github-release", "pypi"}
@@ -59,8 +59,13 @@ def check(cond: bool, msg: str) -> None:
         failures.append(msg)
 
 
-def manifests() -> dict[str, dict]:
+def raw_manifests() -> dict[str, dict]:
     return {k: tomllib.loads((ROOT / "runners" / k / "manifest.toml").read_text()) for k in runner.keys()}
+
+
+def manifests() -> dict[str, dict]:
+    """Manifests with the shared llama.cpp pin filled in (scripts/runner.py resolve)."""
+    return {k: runner.resolve(k, doc) for k, doc in raw_manifests().items()}
 
 
 def catalogue() -> dict:
@@ -93,6 +98,21 @@ def test_catalogue_shape() -> None:
         check(digest is None or (isinstance(digest, str) and DIGEST.match(digest) is not None),
               f"images.json[{i}]: digest must be null or sha256:<64 hex>")
         check(digest is None or tag is not None, f"images.json[{i}]: a digest needs its tag")
+        cand = e.get("candidate")
+        if cand is not None:
+            check(isinstance(cand, dict) and list(cand) == ["tag", "digest"]
+                  and isinstance(cand["tag"], str) and ":" not in cand["tag"]
+                  and isinstance(cand["digest"], str) and DIGEST.match(cand["digest"]) is not None,
+                  f"images.json[{i}]: candidate must be null or {{tag, digest}} with a bare tag and sha256 digest")
+        report = e.get("gate_report")
+        check(report is None or (isinstance(report, str) and report.startswith("https://")),
+              f"images.json[{i}]: gate_report must be null or an https URL")
+        lanes = e.get("lanes_gated")
+        check(isinstance(lanes, list) and set(lanes) <= set(b or []) and len(lanes) == len(set(lanes)),
+              f"images.json[{i}]: lanes_gated must be a list of distinct entries from backends")
+        if lanes:
+            check(digest is not None and report is not None,
+                  f"images.json[{i}]: lanes_gated needs the gated digest and its gate_report")
         rec = e.get("recipe")
         if rec is None:
             check(not e["image"].startswith(runner.PACKAGE_PREFIX),
@@ -101,9 +121,10 @@ def test_catalogue_shape() -> None:
             check(rec == f"runners/{i}" and (ROOT / rec / "manifest.toml").is_file(),
                   f"images.json[{i}]: recipe must be runners/{i} and exist")
             check(e["image"] == runner.PACKAGE_PREFIX + i, f"images.json[{i}]: image must be {runner.PACKAGE_PREFIX}{i}")
-            if tag is not None:
-                check(re.match(r"^[A-Za-z0-9._]+-r[0-9a-f]{7}$", tag) is not None,
-                      f"images.json[{i}]: a built tag is <version>-r<sha7>, got {tag!r}")
+            for t in (tag, (cand or {}).get("tag")):
+                if t is not None:
+                    check(re.match(r"^[A-Za-z0-9._]+-r[0-9a-f]{7}$", t) is not None,
+                          f"images.json[{i}]: a built tag is <version>-r<sha7>, got {t!r}")
 
 
 def test_catalogue_matches_recipes() -> None:
@@ -215,18 +236,26 @@ def test_python_pins() -> None:
 
 
 def test_llama_release() -> None:
-    m = manifests()
-    std, cpu = m["standard"], m["cpu"]
-    check(cpu["source"]["ref"] == std["source"]["ref"] and cpu["image"]["version"] == std["image"]["version"],
-          "runners/cpu must pin the same llama.cpp release and commit as runners/standard")
-    check(std["image"]["version"] == std["source"]["release"], "runners/standard: [image].version must be the release")
+    """One llama.cpp release: runners/llama.cpp.toml, used by standard, cpu and cuda."""
+    pin = runner.read_pin("llama.cpp.toml")
+    check(re.fullmatch(r"b[0-9]+", pin.get("version", "")) is not None, "runners/llama.cpp.toml: version must be bNNNNN")
+    check(runner.SHA40.match(pin.get("ref", "")) is not None, "runners/llama.cpp.toml: ref must be a full commit SHA")
+    check(pin.get("repo") == "https://github.com/ggml-org/llama.cpp.git", "runners/llama.cpp.toml: repo must be ggml-org/llama.cpp")
+    for key in ("standard", "cpu"):
+        check(raw_manifests()[key]["source"].get("pin") == "llama.cpp.toml",
+              f"runners/{key}: must take llama.cpp from runners/llama.cpp.toml ([source].pin)")
     cuda = next((e for e in catalogue()["runners"] if e["id"] == "cuda"), None)
+    check(cuda is not None and cuda["recipe"] is None, "images.json: the external cuda entry is missing")
     if cuda is not None:
-        mt = re.fullmatch(r"server-cuda-b([0-9]+)", cuda["tag"] or "")
-        check(mt is not None, "images.json[cuda]: tag must be ggml-org's server-cuda-b<release>")
-        if mt:
-            check(int(mt.group(1)) <= int(std["image"]["version"].lstrip("b")),
-                  "images.json[cuda]: the CUDA image must not be newer than runners/standard's release")
+        check(cuda["image"] == "ghcr.io/ggml-org/llama.cpp", "images.json[cuda]: image must be ghcr.io/ggml-org/llama.cpp")
+        for t in (cuda["tag"], (cuda["candidate"] or {}).get("tag")):
+            if t is None:
+                continue
+            mt = re.fullmatch(r"server-cuda-b([0-9]+)", t)
+            check(mt is not None, f"images.json[cuda]: {t!r} must be ggml-org's server-cuda-b<release>")
+            if mt:
+                check(int(mt.group(1)) <= int(pin["version"].lstrip("b")),
+                      "images.json[cuda]: the CUDA image must not be newer than runners/llama.cpp.toml")
 
 
 def test_standard_entrypoint() -> None:

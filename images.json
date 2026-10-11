@@ -8,6 +8,9 @@
       "image": "ghcr.io/hal0ai/hal0-runner-standard",
       "tag": null,
       "digest": null,
+      "candidate": null,
+      "gate_report": null,
+      "lanes_gated": [],
       "backends": [
         "rocm",
         "vulkan"
@@ -24,6 +27,9 @@
       "image": "ghcr.io/hal0ai/hal0-runner-cpu",
       "tag": null,
       "digest": null,
+      "candidate": null,
+      "gate_report": null,
+      "lanes_gated": [],
       "backends": [
         "cpu"
       ],
@@ -39,6 +45,9 @@
       "image": "ghcr.io/hal0ai/hal0-runner-flm",
       "tag": null,
       "digest": null,
+      "candidate": null,
+      "gate_report": null,
+      "lanes_gated": [],
       "backends": [
         "npu"
       ],
@@ -54,6 +63,9 @@
       "image": "ghcr.io/hal0ai/hal0-runner-kokoro",
       "tag": null,
       "digest": null,
+      "candidate": null,
+      "gate_report": null,
+      "lanes_gated": [],
       "backends": [
         "cpu"
       ],
@@ -69,6 +81,9 @@
       "image": "ghcr.io/hal0ai/hal0-runner-moonshine",
       "tag": null,
       "digest": null,
+      "candidate": null,
+      "gate_report": null,
+      "lanes_gated": [],
       "backends": [
         "cpu"
       ],
@@ -84,6 +99,9 @@
       "image": "ghcr.io/hal0ai/hal0-runner-comfyui",
       "tag": null,
       "digest": null,
+      "candidate": null,
+      "gate_report": null,
+      "lanes_gated": [],
       "backends": [
         "rocm"
       ],
@@ -99,6 +117,9 @@
       "image": "ghcr.io/hal0ai/hal0-runner-qwen3tts",
       "tag": null,
       "digest": null,
+      "candidate": null,
+      "gate_report": null,
+      "lanes_gated": [],
       "backends": [
         "rocm"
       ],
@@ -112,15 +133,21 @@
       "title": "NVIDIA CUDA",
       "summary": "llama.cpp for NVIDIA GPUs. Pick it on a box with an NVIDIA card.",
       "image": "ghcr.io/ggml-org/llama.cpp",
-      "tag": "server-cuda-b11541",
+      "tag": null,
       "digest": null,
+      "candidate": {
+        "tag": "server-cuda-b11541",
+        "digest": "sha256:f88fa8d94d872312a4ad117acd490fa997bef81f03f161f0cfe0d74272e5b5bb"
+      },
+      "gate_report": null,
+      "lanes_gated": [],
       "backends": [
         "cuda"
       ],
       "family": "llama-server",
       "tier": "optional",
       "recipe": null,
-      "maintainer_notes": "External: ggml-org's official CUDA server image, not built here. Pin the same llama.cpp release as standard when ggml-org has published it; ggml-org does not publish a CUDA image for every release (newest at the time of writing: b11541). The CUDA lane is hidden in hal0 (hal0 #2362)."
+      "maintainer_notes": "External: ggml-org's official CUDA server image, not built here. It follows runners/llama.cpp.toml: pin ghcr.io/ggml-org/llama.cpp:server-cuda-<version> once ggml-org has published it for that release. ggml-org does not publish a CUDA image for every release; there is none for b11552, so the candidate is the newest one not ahead of the pin (b11541). The CUDA lane is hidden in hal0 (hal0 #2362)."
     }
   ]
 }

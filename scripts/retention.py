@@ -142,8 +142,8 @@ def build_images_index(images_doc: dict) -> dict:
     """package name -> {"tags": set(...), "digests": set(...)} from images.json.
 
     images.json is schema hal0.runner-images.v2: a `runners` array whose
-    entries carry `image`, `tag` and `digest` (tag/digest are null until a
-    build is gated). External images (not under ghcr.io/hal0ai) are indexed
+    entries carry `image`, `tag` and `digest` (null until a build is gated)
+    and `candidate` ({tag, digest} of a build waiting for its gate, or null). External images (not under ghcr.io/hal0ai) are indexed
     too; the sweep only ever lists hal0-* packages, so they never match.
     """
     index: dict[str, dict[str, set]] = {}
@@ -157,6 +157,12 @@ def build_images_index(images_doc: dict) -> dict:
             slot["tags"].add(entry["tag"])
         if entry.get("digest"):
             slot["digests"].add(entry["digest"])
+        # A candidate (built, waiting for its gate) is protected as well.
+        cand = entry.get("candidate") or {}
+        if cand.get("tag"):
+            slot["tags"].add(cand["tag"])
+        if cand.get("digest"):
+            slot["digests"].add(cand["digest"])
     return index
 
 

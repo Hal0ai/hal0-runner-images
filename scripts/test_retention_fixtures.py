@@ -100,6 +100,14 @@ versions = [
 results = classify_package("hal0-toolbox-cpu", versions, images_index, allowlist_index, now=NOW)
 check("images.json-named tag kept", results, 1, "keep", "images.json")
 
+# A v2 candidate (built, waiting for its gate) is kept; null tag/digest are ignored.
+cand_index = build_images_index({"runners": [{
+    "image": "ghcr.io/hal0ai/hal0-runner-standard", "tag": None, "digest": None,
+    "candidate": {"tag": "b11552-r1a2b3c4", "digest": "sha256:" + "c" * 64}}]})
+versions = [v(1, "sha256:" + "c" * 64, ["b11552-r1a2b3c4"], age_days=400)]
+results = classify_package("hal0-runner-standard", versions, cand_index, allowlist_index, now=NOW)
+check("images.json candidate kept", results, 1, "keep", "images.json")
+
 
 # ---------------------------------------------------------------------------
 # Test 2: allowlist-named tag is kept.
