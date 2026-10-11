@@ -57,7 +57,10 @@ runner's recipe in an ordinary PR:
 
 ## 2. Check the bump: `build.yml` on the PR
 
-Builds only the runners whose `runners/<key>/**` files changed. For each:
+Builds only the runners whose recipe changed: their `runners/<key>/` directory, the
+shared pin file their manifest names, or `scripts/runner.py` itself (the list comes
+from `runner.recipe_paths(key)`, the same paths the image tag's sha7 counts, so a
+change to the build driver rebuilds every runner). For each:
 `python3 scripts/runner.py build <key> --check`, then a full image build with
 `push=false`. A broken bump is red before anyone reads the diff. Require the
 **result** job in branch protection; it is the one check that always reports.
@@ -198,6 +201,9 @@ Defined in the docstring of `ci/lib.py`. If the layout changes, change it there.
 - `scripts/runner.py` is the only build entrypoint: `list --only <keys>` (matrix
   JSON: `key`, `image`, `tag`, `heavy`, `timeout_minutes`), `build <key> --check`
   and `build <key> --tag <ref>` (never pushes). `list` needs full git history.
+- `runner.recipe_paths(key)` lists the paths a runner's build depends on; `ci/plan.py`
+  rebuilds a runner when any of them changes (it falls back to the same list if
+  `runner.py` has no such function).
 - The image's `org.opencontainers.image.version` label equals its immutable tag.
   Promote reads the tag from it.
 - `runners/llama.cpp.toml` holds the one llama.cpp release (`[llama_cpp]`
