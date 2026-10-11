@@ -19,18 +19,19 @@ One name per runner, used everywhere: the hal0 runner key, the catalogue
 | `moonshine` | Moonshine transcription | speech-to-text on the CPU | useful-moonshine-onnx `20251121` | default |
 | `comfyui` | ComfyUI | image and video generation on the GPU (ROCm) | Comfy-Org/ComfyUI `0.28.0` (commit `c9602625`) | default |
 | `qwen3tts` | Qwen3 TTS | multilingual text-to-speech on the GPU (ROCm) | qwen-tts `0.1.1` | optional |
-| `cuda` | NVIDIA CUDA | llama.cpp on NVIDIA GPUs | ggml-org's own `server-cuda` image (not built here) | optional |
+| `cuda` | NVIDIA CUDA | llama.cpp on NVIDIA GPUs | ggml-org's own `server-cuda-<release>` image (not built here) | optional |
 
 `standard` is the default for AMD GPUs: unmodified upstream llama.cpp at a
 tagged release with one small patch, ROCm 10.0 and Vulkan (RADV) in one
-image. `cpu` uses the same llama.cpp release.
+image. `standard`, `cpu` and `cuda` share one llama.cpp release, pinned in
+`runners/llama.cpp.toml`, so one change moves all three.
 
 ## Tags
 
 Every build gets one tag that never moves: `<upstream version>-r<recipe sha7>`,
 for example `hal0-runner-standard:b11552-r1a2b3c4` or
 `hal0-runner-flm:0.9.44-r1a2b3c4`. `<recipe sha7>` is the last commit that
-changed `runners/<key>/`, so an unchanged recipe always has the same tag and a
+changed `runners/<key>/` (or the shared pin file it uses), so an unchanged recipe always has the same tag and a
 pushed tag is never pushed again. There are no `latest`, `main` or `v1` tags.
 hal0 pins `image:tag@digest`; the digest is what counts.
 
@@ -41,13 +42,15 @@ runners/<key>/manifest.toml   every pin for one runner: base images by digest, u
                               build arguments, patches, the hardware gate, why it exists
 runners/<key>/Containerfile   the image definition (no pin defaults; values come from the manifest)
 runners/<key>/...             patches/, the entrypoint, server code, requirements.txt
+runners/llama.cpp.toml        the llama.cpp release shared by standard, cpu and cuda
 images.json                   the catalogue hal0 reads (docs/SCHEMA.md)
 retention-allowlist.json      old packages the GHCR cleanup must keep for installed boxes
 scripts/runner.py             builds any runner: list, tag, build, build --check
 scripts/source_watch.py       weekly report: which upstreams have a newer release
 scripts/retention.py          GHCR cleanup (dry run unless asked to delete)
 scripts/test_*.py             stdlib checks, run on every pull request
-docs/UPDATING.md              how to update, gate and publish a runner
+docs/UPDATING.md              how a runner is updated, built, gated and pinned (the CI flow)
+docs/RECIPES.md               what goes in a recipe and how to change one
 docs/SCHEMA.md                the images.json format
 docs/HAL0.md                  how hal0 uses these images
 ```
@@ -68,4 +71,5 @@ python3 scripts/test_retention_fixtures.py
 python3 scripts/test_source_watch.py
 ```
 
-To change a runner, follow [docs/UPDATING.md](docs/UPDATING.md).
+To change a runner, see [docs/RECIPES.md](docs/RECIPES.md) for the recipe and
+[docs/UPDATING.md](docs/UPDATING.md) for the build, gate and pin flow.

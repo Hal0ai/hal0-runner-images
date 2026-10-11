@@ -9,7 +9,9 @@
   runner key maps to an `image:tag@digest` in hal0's own code. That pin moves
   only through a hal0 pull request, after the build passed its gate here
   (docs/UPDATING.md). The catalogue's `tag` and `digest` record the same
-  gated build so both repos agree.
+  gated build so both repos agree, and `lanes_gated` lists the backends that
+  passed the gate for it: hal0 offers a runner on a lane (for example Vulkan)
+  only when that lane is listed, instead of keeping its own list.
 - **Image labels.** Every image carries:
 
   | label | value |
