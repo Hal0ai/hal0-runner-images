@@ -43,6 +43,7 @@ import re
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -291,13 +292,19 @@ def verify_attestation(image: str, digest: str) -> dict:
     return {"source_commit": commit}
 
 
+#: Hosts that take the workflow token. A release asset URL
+#: (https://github.com/<repo>/releases/download/..., what scripts/gate.py
+#: --upload prints) is public and redirects to a signed storage URL, so no
+#: token is sent there, and none ever follows a redirect.
+TOKEN_HOSTS = ("api.github.com", "raw.githubusercontent.com")
+
+
 def fetch_gate_report(url: str, token: str | None) -> object:
     if not url.startswith("https://"):
         raise lib.CIError("gate report must be an https URL")
-    req = urllib.request.Request(url, headers={
-        "Accept": "application/json", "User-Agent": "hal0-runner-images-ci",
-        **({"Authorization": f"Bearer {token}"} if token and "github" in url else {}),
-    })
+    req = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "hal0-runner-images-ci"})
+    if token and urllib.parse.urlsplit(url).hostname in TOKEN_HOSTS:
+        req.add_unredirected_header("Authorization", f"Bearer {token}")
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             body = resp.read(2_000_000).decode("utf-8", "replace")
