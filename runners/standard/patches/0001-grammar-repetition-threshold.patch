@@ -1,0 +1,24 @@
+From: KYmidnight (via kyuz0/amd-strix-halo-toolboxes#70)
+Subject: [PATCH] grammar: raise MAX_REPETITION_THRESHOLD to 100000 for complex tool schemas
+
+Carried unchanged from kyuz0/amd-strix-halo-toolboxes toolboxes/
+llama-grammar.patch. A json_schema response_format compiled from a large
+tool manifest exceeds the 2000-repetition cap and llama-server rejects the
+request; raising the cap costs nothing on schemas that fit. Drop this patch
+when upstream raises the threshold or makes it a runtime option.
+---
+ src/llama-grammar.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/llama-grammar.cpp b/src/llama-grammar.cpp
+--- a/src/llama-grammar.cpp
++++ b/src/llama-grammar.cpp
+@@ -10,7 +10,7 @@
+ #include <set>
+ #include <stdexcept>
+ 
+-#define MAX_REPETITION_THRESHOLD 2000
++#define MAX_REPETITION_THRESHOLD 100000
+ //
+ // helpers
+ //

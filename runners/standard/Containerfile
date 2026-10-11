@@ -1,0 +1,90 @@
+# check=skip=InvalidDefaultArgInFrom
+# hal0-runner-standard: pristine ggml-org llama.cpp, HIP + Vulkan, on AMD's
+# stable ROCm 10.0 packages for gfx1151 (Strix Halo). Fedora 44.
+#
+# Build it with `python3 scripts/runner.py build standard`. That script
+# clones the pinned source into ./src, applies the patch series on the host,
+# and passes every value from manifest.toml as --build-arg, plus the OCI
+# labels. The ARGs below have no defaults on purpose: manifest.toml is the
+# only place a pin lives.
+#
+# Stages:
+#   toolchain  Fedora 44 + ROCm 10.0 devel + Vulkan headers and glslc
+#   builder    cmake configure + build of ./src
+#   runtime    fedora-minimal 44 + ROCm 10.0 runtime + RADV, binaries only
+
+ARG FEDORA_BUILDER
+ARG FEDORA_RUNTIME
+
+# ---------------------------------------------------------------- toolchain
+FROM ${FEDORA_BUILDER} AS toolchain
+ARG ROCM_REPO
+ARG ROCM_GPG
+ARG ROCM_SERIES
+ARG ROCM_NEVR
+RUN printf '[amdrocm-stable]\nname=AMD ROCm stable\nbaseurl=%s\nenabled=1\npriority=50\ngpgcheck=1\ngpgkey=%s\n' \
+      "${ROCM_REPO}" "${ROCM_GPG}" > /etc/yum.repos.d/rocm.repo
+# amdrocm-core-devel<series>-gfx1151 is AMD's devel metapackage for this GPU:
+# HIP, the LLVM toolchain, hipBLAS/rocBLAS devel. The Vulkan backend needs
+# the loader headers plus glslc for the shader generator.
+RUN dnf -y --nodocs --setopt=install_weak_deps=False install \
+      make gcc gcc-c++ cmake ninja-build git-core patch libcurl-devel \
+      vulkan-headers vulkan-loader-devel glslc glslang spirv-headers-devel \
+      "amdrocm-core-devel${ROCM_SERIES}-gfx1151-${ROCM_NEVR}" \
+    && dnf clean all && rm -rf /var/cache/dnf/*
+ENV ROCM_PATH=/opt/rocm \
+    HIP_PATH=/opt/rocm \
+    PATH=/opt/rocm/bin:/opt/rocm/core/bin:/opt/rocm/core/lib/llvm/bin:/usr/local/bin:/usr/bin:/bin \
+    LD_LIBRARY_PATH=/opt/rocm/core/lib/rocm_sysdeps/lib:/opt/rocm/core/lib
+
+# ------------------------------------------------------------------ builder
+FROM toolchain AS builder
+ARG CMAKE_FLAGS
+ARG JOBS=4
+COPY src/ /src/
+WORKDIR /src
+# Mark the copied tree safe so build-info embeds the commit.
+RUN git config --global --add safe.directory /src \
+    && cmake -S . -B build ${CMAKE_FLAGS} \
+    && cmake --build build -j "${JOBS}" \
+         --target llama-server llama-cli llama-bench llama-quantize llama-perplexity
+
+# ------------------------------------------------------------------ runtime
+FROM ${FEDORA_RUNTIME} AS runtime
+ARG FEDORA_RUNTIME
+ARG ROCM_REPO
+ARG ROCM_GPG
+ARG ROCM_SERIES
+ARG ROCM_NEVR
+RUN printf '[amdrocm-stable]\nname=AMD ROCm stable\nbaseurl=%s\nenabled=1\npriority=50\ngpgcheck=1\ngpgkey=%s\n' \
+      "${ROCM_REPO}" "${ROCM_GPG}" > /etc/yum.repos.d/rocm.repo
+# Runtime only: amdrocm-runtime (HIP, HSA, comgr) and the gfx1151 BLAS
+# kernels. Not the amdrocm<series>-gfx1151 metapackage, which adds MIOpen,
+# FFT, RCCL, decode/jpeg and the SMI stack llama-server never loads.
+# mesa-vulkan-drivers is the RADV lane; curl is the entrypoint's /health probe.
+RUN microdnf -y --nodocs --setopt=install_weak_deps=0 install \
+      bash ca-certificates curl procps-ng libatomic libstdc++ libgcc libgomp \
+      mesa-vulkan-drivers vulkan-loader \
+      "amdrocm-runtime${ROCM_SERIES}-${ROCM_NEVR}" \
+      "amdrocm-blas${ROCM_SERIES}-gfx1151-${ROCM_NEVR}" \
+    && microdnf clean all && rm -rf /var/cache/dnf/* \
+    && ln -sfn "core-${ROCM_SERIES}" /opt/rocm/core \
+    && ln -sfn core/bin /opt/rocm/bin \
+    && ln -sfn core/lib /opt/rocm/lib \
+    && ln -sfn core/share /opt/rocm/share \
+    && ln -sfn core/lib/llvm /opt/rocm/llvm
+# hal0's in-image layout: binaries in /opt/hal0/bin, entrypoint in /opt/hal0.
+COPY --from=builder /src/build/bin/ /opt/hal0/bin/
+COPY entrypoint.sh /opt/hal0/entrypoint.sh
+RUN chmod +x /opt/hal0/entrypoint.sh
+ENV ROCM_PATH=/opt/rocm \
+    HIP_PATH=/opt/rocm \
+    PATH=/opt/hal0/bin:/opt/rocm/bin:/usr/local/bin:/usr/bin:/bin \
+    LD_LIBRARY_PATH=/opt/hal0/bin:/opt/rocm/core/lib:/opt/rocm/core/lib/rocm_sysdeps/lib \
+    HSA_OVERRIDE_GFX_VERSION=11.5.1 \
+    GGML_HIP_ENABLE_UNIFIED_MEMORY=1
+# The common OCI and dev.hal0 labels come from scripts/runner.py.
+LABEL org.opencontainers.image.base.name="${FEDORA_RUNTIME}" \
+      dev.hal0.runner.rocm="${ROCM_SERIES} (${ROCM_NEVR})"
+EXPOSE 8080
+ENTRYPOINT ["/opt/hal0/entrypoint.sh"]
