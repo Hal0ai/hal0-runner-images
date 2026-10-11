@@ -1,24 +1,17 @@
-# hal0-toolbox-kokoro — Kokoro-82M TTS (CPU ONNX), OpenAI-compat /v1/audio/speech
+# check=skip=InvalidDefaultArgInFrom
+# hal0-runner-kokoro: Kokoro-82M text-to-speech on the CPU (ONNX), OpenAI-compatible /v1/audio/speech.
 #
-# RECONSTRUCTED 2026-07-19 from the published image's layer history
-# (podman history ghcr.io/hal0ai/hal0-toolbox-kokoro:v1) — the original
-# Dockerfile was built ad-hoc and never landed in the app repo. Verified
-# faithful to the pinned digest
-#   sha256:1ac80acc00a2e9d578b077fa0a3f2c3e3f32f4f3da5080f346838e1c5a540456
-# except for build metadata (timestamps) which don't affect runtime behaviour.
-# REBUILD-VERIFIED 2026-07-19: builds clean; container serves and /health
-# returns 200 {"status":"ok","model_loaded":true,...} (54 voices, af_bella).
+# Build it with `python3 scripts/runner.py build kokoro`. The base image digest
+# comes from manifest.toml; every Python package is pinned in
+# requirements.txt (the full set, transitive dependencies included).
 #
-# Upstream reference: https://github.com/thewh1teagle/kokoro-onnx
-#
-# Build context: this directory (kokoro/). The original built from the app
-# repo root and COPY'd packaging/toolbox/kokoro/kokoro_server.py; here the
-# context is scoped to the runner dir so the COPY path is just the filename.
+# Contract with hal0: ENTRYPOINT runs the server; hal0 passes flags only
+# (--host, --port, model options). Runs as the hal0 user (uid/gid 1000).
 
-FROM python:3.12.13-bookworm
+ARG PYTHON
+FROM ${PYTHON}
 
 ARG DEBIAN_FRONTEND=noninteractive
-
 RUN apt-get update && apt-get install -y --no-install-recommends \
         espeak-ng \
         libespeak-ng1 \
@@ -32,24 +25,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir \
-        kokoro-onnx==0.4.9 \
-        onnxruntime==1.20.1 \
-        numpy \
-        soundfile \
-        fastapi==0.115.6 \
-        "uvicorn[standard]==0.32.1" \
-        httpx
+ARG PIP_VERSION
+COPY requirements.txt /opt/kokoro/requirements.txt
+RUN pip install --no-cache-dir "pip==${PIP_VERSION}" \
+    && pip install --no-cache-dir -r /opt/kokoro/requirements.txt \
+    && pip check
 
 COPY kokoro_server.py /opt/kokoro/kokoro_server.py
-
 RUN printf '#!/bin/sh\nexec python3 /opt/kokoro/kokoro_server.py "$@"\n' \
         > /usr/local/bin/kokoro-server \
     && chmod 0755 /usr/local/bin/kokoro-server
 
-# hal0 runtime user + render/video groups (numeric GIDs are placeholders that
-# --group-add overrides per host at run time; see src/hal0/providers/_gpu.py).
+# hal0 runtime user plus render/video groups (the numeric GIDs are
+# placeholders; hal0 passes --group-add with the host's real GIDs).
 RUN groupadd --system --gid 44  video  2>/dev/null || true \
     && groupadd --system --gid 993 render 2>/dev/null || true \
     && groupadd --system --gid 1000 hal0 \

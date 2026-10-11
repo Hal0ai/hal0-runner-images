@@ -1,0 +1,70 @@
+# runners/comfyui — ComfyUI image and video generation on the GPU (ROCm).
+#
+# ComfyUI plus the three custom nodes hal0 relies on, on Fedora with a dated
+# TheRock nightly PyTorch for gfx1151. One ROCm image, no Vulkan variant
+# (see the Containerfile header).
+#
+# Build:   python3 scripts/runner.py build comfyui
+
+[runner]
+key = "comfyui"
+title = "ComfyUI"
+summary = "Image and video generation on the GPU (ROCm)."
+family = "comfyui"
+backends = ["rocm"]
+tier = "default"
+
+[image]
+package = "ghcr.io/hal0ai/hal0-runner-comfyui"
+#: ComfyUI's own __version__ at the pinned commit (comfyui_version.py).
+#: The commit is 16 commits after the v0.28.0 tag; it is the exact source
+#: the published hal0 ComfyUI image was built and smoke-tested from.
+version = "0.28.0"
+
+[source]
+#: comfyanonymous/ComfyUI moved to Comfy-Org/ComfyUI; GitHub redirects.
+repo = "https://github.com/Comfy-Org/ComfyUI.git"
+ref = "c9602625e445e9ee37d3ac6faf5ea9ec1e0de87e"
+
+[build]
+heavy = true
+timeout_minutes = 120
+
+[build.args]
+#: fedora:rawhide as of 2026-07-19, pinned by digest (rawhide is the only
+#: Fedora with python3.13 plus the libraries this image needs).
+FEDORA = "registry.fedoraproject.org/fedora@sha256:7c96770c3676e4e61a3c0e258f7488c1ac723557ff4c10a24a0125ae330d0e10"
+SETUPTOOLS_VERSION = "83.0.0"
+WHEEL_VERSION = "0.47.0"
+#: AMD TheRock nightly index for gfx1151, and one build date for all three
+#: packages. 20260501 is the latest date with cp313 wheels for all three.
+ROCM_INDEX = "https://rocm.nightlies.amd.com/v2/gfx1151/"
+TORCH_VER = "2.9.1+rocm7.13.0a20260501"
+VISION_VER = "0.24.0+rocm7.13.0a20260501"
+AUDIO_VER = "2.9.0+rocm7.13.0a20260501"
+COMFYUI_REPO = "https://github.com/Comfy-Org/ComfyUI.git"
+COMFYUI_REF = "c9602625e445e9ee37d3ac6faf5ea9ec1e0de87e"
+#: cubiq/ComfyUI_essentials (2025-04-14)
+ESSENTIALS_REF = "9d9f4bedfc9f0321c19faf71855e228c93bd0dc9"
+#: kyuz0/ComfyUI-AMDGPUMonitor (2025-11-23)
+AMDGPUMONITOR_REF = "0c584ed28ed3678d96f631a6eff91be397c0baa4"
+#: city96/ComfyUI-GGUF (2026-01-12)
+GGUF_REF = "6ea2651e7df66d7585f6ffee804b20e92fb38b8a"
+
+[verification]
+boxes = ["the Strix Halo box (kfd present)"]
+probes = [
+    "the build's non-ROCm-torch assertion and `pip check` pass (part of the Containerfile)",
+    "ComfyUI starts; its log shows AMD arch gfx1151, the full unified-memory VRAM pool and NORMAL_VRAM",
+    "the AMDGPUMonitor, essentials and GGUF custom nodes load",
+    "one SDXL (or Flux) image generation through hal0 completes",
+]
+
+[lifecycle]
+purpose = "Image and video generation for hal0, on the GPU."
+needed_for = ["hal0 image/video slots and their ComfyUI workflows (SDXL, Flux, Qwen-Image, Wan2.2)"]
+retire_when = "When hal0 drops ComfyUI."
+
+[lifecycle.track]
+kind = "github-release"
+pattern = "^v[0-9]+\\.[0-9]+\\.[0-9]+$"

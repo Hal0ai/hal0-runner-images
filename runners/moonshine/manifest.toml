@@ -1,0 +1,50 @@
+# runners/moonshine — Moonshine speech-to-text on the CPU.
+#
+# A small FastAPI server (moonshine_server.py, hal0's own code) around the
+# useful-moonshine-onnx package. OpenAI-compatible /v1/audio/transcriptions
+# plus WebSocket streaming.
+#
+# Build:   python3 scripts/runner.py build moonshine
+
+[runner]
+key = "moonshine"
+title = "Moonshine transcription"
+summary = "Speech-to-text on the CPU. Works on any box, no GPU or NPU needed."
+family = "moonshine"
+backends = ["cpu"]
+tier = "default"
+
+[image]
+package = "ghcr.io/hal0ai/hal0-runner-moonshine"
+version = "20251121"
+
+[source]
+kind = "pypi"
+package = "useful-moonshine-onnx"
+version = "20251121"
+repo = "https://github.com/moonshine-ai/moonshine"
+
+[build]
+heavy = false
+timeout_minutes = 45
+
+[build.args]
+PYTHON = "docker.io/library/python:3.12.13-bookworm@sha256:3cd9086bdb30f7c9bc08a3fa621d9842e0d3f6f9291aeb4677e0547817c10b12"
+PIP_VERSION = "26.1.1"
+
+[verification]
+boxes = ["any x86_64 box"]
+probes = [
+    "the build's `pip check` passes (part of the Containerfile)",
+    "/health returns 200 with model_loaded=true (model moonshine-small_streaming-en)",
+    "POST /v1/audio/transcriptions with a short English WAV returns the expected text",
+    "the WebSocket streaming endpoint returns partial transcripts",
+]
+
+[lifecycle]
+purpose = "Default speech-to-text: runs on the CPU on any box."
+needed_for = ["hal0 STT slots (Moonshine ONNX)"]
+retire_when = "When hal0 replaces Moonshine as its default transcription engine."
+
+[lifecycle.track]
+kind = "pypi"

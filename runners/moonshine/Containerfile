@@ -1,21 +1,18 @@
-# hal0-toolbox-moonshine — Moonshine STT (CPU/Vulkan)
-# OpenAI-compat /v1/audio/transcriptions + WebSocket streaming.
+# check=skip=InvalidDefaultArgInFrom
+# hal0-runner-moonshine: Moonshine speech-to-text on the CPU (ONNX), OpenAI-compatible
+# /v1/audio/transcriptions plus WebSocket streaming.
 #
-# RECONSTRUCTED 2026-07-19 from the published image's layer history
-# (fetched from the ghcr config blob — the image was not present on any
-# reachable box; the original Dockerfile was built ad-hoc and never landed
-# in the app repo). Verified faithful to the pinned digest
-#   sha256:bf07e3d5640fc1d009298be0600b62ec24185f80d7c8bed47321742fce17aa31
-# except for build metadata (timestamps).
-# REBUILD-VERIFIED 2026-07-19: builds clean; container serves and /health
-# returns 200 {"status":"ok","model_loaded":true,...} (moonshine-small_streaming-en).
+# Build it with `python3 scripts/runner.py build moonshine`. The base image digest
+# comes from manifest.toml; every Python package is pinned in
+# requirements.txt (the full set, transitive dependencies included).
 #
-# Build context: this directory (moonshine/).
+# Contract with hal0: ENTRYPOINT runs the server; hal0 passes flags only
+# (--host, --port, model options). Runs as the hal0 user (uid/gid 1000).
 
-FROM python:3.12.13-bookworm
+ARG PYTHON
+FROM ${PYTHON}
 
 ARG DEBIAN_FRONTEND=noninteractive
-
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ffmpeg \
         libsndfile1 \
@@ -27,24 +24,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir \
-        useful-moonshine-onnx==20251121 \
-        onnxruntime==1.20.1 \
-        tokenizers \
-        numpy \
-        soundfile \
-        fastapi==0.115.6 \
-        "uvicorn[standard]==0.32.1" \
-        python-multipart==0.0.20 \
-        httpx
+ARG PIP_VERSION
+COPY requirements.txt /opt/moonshine/requirements.txt
+RUN pip install --no-cache-dir "pip==${PIP_VERSION}" \
+    && pip install --no-cache-dir -r /opt/moonshine/requirements.txt \
+    && pip check
 
 COPY moonshine_server.py /opt/moonshine/moonshine_server.py
-
 RUN printf '#!/bin/sh\nexec python3 /opt/moonshine/moonshine_server.py "$@"\n' \
         > /usr/local/bin/moonshine-server \
     && chmod 0755 /usr/local/bin/moonshine-server
 
+# hal0 runtime user plus render/video groups (the numeric GIDs are
+# placeholders; hal0 passes --group-add with the host's real GIDs).
 RUN groupadd --system --gid 44  video  2>/dev/null || true \
     && groupadd --system --gid 993 render 2>/dev/null || true \
     && groupadd --system --gid 1000 hal0 \

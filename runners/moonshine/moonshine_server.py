@@ -15,7 +15,7 @@ CLI flags mirror MoonshineProvider.start_cmd():
   --port <port>            Bind port (slot default 8089).
   --host <host>            Bind host (default 0.0.0.0).
 
-This file is baked into the hal0-toolbox-moonshine image. The runtime
+This file is baked into the hal0-runner-moonshine image. The runtime
 container is non-root (hal0:hal0, UID 1000); model dirs are bind-mounted
 read-only from the host's HAL0_HOME/models.
 """

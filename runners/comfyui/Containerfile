@@ -1,0 +1,99 @@
+# check=skip=InvalidDefaultArgInFrom
+# hal0-runner-comfyui: ComfyUI for AMD Strix Halo (gfx1151), ROCm only.
+#
+# Build it with `python3 scripts/runner.py build comfyui`. Every pin comes
+# from manifest.toml as --build-arg (the ARGs here have no defaults), and
+# constraints.txt fixes the version of every Python package ComfyUI's own
+# requirements pull in.
+#
+# Why one ROCm image and no Vulkan variant: ComfyUI is PyTorch-native, and
+# PyTorch has no usable Vulkan compute backend on gfx1151. The only Vulkan
+# diffusion path on Strix Halo is stable-diffusion.cpp, a different runtime
+# with no node graph or custom nodes.
+#
+# Layout matches what hal0's provider expects (src/hal0/providers/comfyui.py):
+# ComfyUI at /opt/ComfyUI, the venv at /opt/venv. Models are never baked in:
+# hal0 bind-mounts them and supplies extra_model_paths.yaml and the launch
+# flags at container start; hal0's own gate node is bind-mounted too.
+#
+# PyTorch: there is no stable ROCm wheel for gfx1151 yet, so the torch,
+# torchvision and torchaudio triple comes from AMD's TheRock nightly index,
+# pinned to one build date (the three must share a date; mixing dates is an
+# ABI mismatch). The date must ship cp313 wheels, because the venv is
+# Python 3.13.
+#
+# Redistributing an image built from ComfyUI makes it a GPL-3.0 derivative.
+
+ARG FEDORA
+FROM ${FEDORA}
+
+RUN dnf -y install --setopt=install_weak_deps=False --nodocs \
+        libdrm-devel python3.13 python3.13-devel git rsync libatomic \
+        bash ca-certificates curl gcc gcc-c++ binutils make ffmpeg-free \
+    && dnf clean all && rm -rf /var/cache/dnf/*
+
+# --- Python venv (mirrors kyuz0's /opt/venv layout) ---
+RUN /usr/bin/python3.13 -m venv /opt/venv
+ENV VIRTUAL_ENV=/opt/venv
+ENV PATH=/opt/venv/bin:$PATH
+ENV PIP_NO_CACHE_DIR=1
+RUN printf 'source /opt/venv/bin/activate\n' > /etc/profile.d/venv.sh
+# pip itself is the one ensurepip ships in the pinned base image.
+ARG SETUPTOOLS_VERSION
+ARG WHEEL_VERSION
+RUN python -m pip install "setuptools==${SETUPTOOLS_VERSION}" "wheel==${WHEEL_VERSION}"
+
+# --- ROCm + PyTorch: one dated TheRock nightly triple ---
+ARG ROCM_INDEX
+ARG TORCH_VER
+ARG VISION_VER
+ARG AUDIO_VER
+RUN python -m pip install --index-url ${ROCM_INDEX} \
+        "torch==${TORCH_VER}" \
+        "torchvision==${VISION_VER}" \
+        "torchaudio==${AUDIO_VER}"
+
+# Fail the build (not a silent runtime CPU fallback) if a CPU-only torch slipped in.
+RUN python -c "import torch; print('Torch:', torch.__version__); assert 'rocm' in torch.__version__, 'FATAL: non-ROCm torch installed'"
+
+# --- ComfyUI at a pinned commit; its requirements under constraints.txt ---
+ARG COMFYUI_REPO
+ARG COMFYUI_REF
+RUN git clone "${COMFYUI_REPO}" /opt/ComfyUI \
+    && cd /opt/ComfyUI && git checkout "${COMFYUI_REF}"
+WORKDIR /opt/ComfyUI
+COPY constraints.txt /opt/hal0/constraints.txt
+RUN python -m pip install -c /opt/hal0/constraints.txt -r requirements.txt \
+    && python -m pip check
+
+# --- custom_nodes: the set hal0 depends on, pinned by commit ---
+ARG ESSENTIALS_REF
+ARG AMDGPUMONITOR_REF
+ARG GGUF_REF
+RUN git clone https://github.com/cubiq/ComfyUI_essentials /opt/ComfyUI/custom_nodes/ComfyUI_essentials \
+    && cd /opt/ComfyUI/custom_nodes/ComfyUI_essentials && git checkout ${ESSENTIALS_REF}
+RUN git clone https://github.com/kyuz0/ComfyUI-AMDGPUMonitor /opt/ComfyUI/custom_nodes/ComfyUI-AMDGPUMonitor \
+    && cd /opt/ComfyUI/custom_nodes/ComfyUI-AMDGPUMonitor && git checkout ${AMDGPUMONITOR_REF}
+RUN git clone https://github.com/city96/ComfyUI-GGUF /opt/ComfyUI/custom_nodes/ComfyUI-GGUF \
+    && cd /opt/ComfyUI/custom_nodes/ComfyUI-GGUF && git checkout ${GGUF_REF}
+
+# --- Runtime env: unified-memory stability fixes (community-verified) ---
+# HSA_OVERRIDE_GFX_VERSION=11.5.1 is a SELF-PIN to gfx1151's own ISA encoding,
+# NOT spoofing another chip. HSA_ENABLE_SDMA=0 / HSA_USE_SVM=0 avoid GPU-ring
+# timeouts / VAE-decode artifacts on unified memory (per hec-ovi + kyuz0).
+ENV HSA_OVERRIDE_GFX_VERSION=11.5.1 \
+    HSA_ENABLE_SDMA=0 \
+    HSA_USE_SVM=0 \
+    TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1
+
+RUN find /opt/venv -type f -name "*.so" -exec strip -s {} + 2>/dev/null || true \
+    && find /opt/venv -type d -name "__pycache__" -prune -exec rm -rf {} + \
+    && python -m pip cache purge || true \
+    && dnf clean all && rm -rf /var/cache/dnf/*
+
+EXPOSE 8188
+WORKDIR /opt/ComfyUI
+
+# extra_model_paths.yaml + launch flags (--disable-mmap --bf16-vae --cache-none)
+# are supplied by hal0's provider/installer at container start, same as today.
+CMD ["/bin/bash"]

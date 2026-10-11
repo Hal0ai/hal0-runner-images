@@ -1,0 +1,48 @@
+# check=skip=InvalidDefaultArgInFrom
+# hal0-runner-qwen3tts: Qwen3-TTS (CustomVoice) multilingual text-to-speech on
+# the GPU (ROCm), OpenAI-compatible /v1/audio/speech.
+#
+# Build it with `python3 scripts/runner.py build qwen3tts`. The base image
+# (AMD's rocm/pytorch, ROCm 7.2.4 + PyTorch 2.10) is pinned by digest in
+# manifest.toml; every package installed on top of it is pinned in
+# requirements.txt. torch comes from the base and is never replaced: pip sees
+# it already satisfies qwen-tts, and `pip check` confirms the set is
+# consistent. flash-attn is deliberately absent (no clean ROCm build); the
+# server lets transformers fall back to sdpa/eager.
+#
+# Contract with hal0: ENTRYPOINT runs the server; hal0 passes flags only
+# (--model_path, --host, --port). The Hugging Face cache lives in /cache,
+# which hal0 bind-mounts so the codec/tokenizer download happens once.
+#
+# Run (GPU passthrough as for a hal0 GPU slot):
+#   podman run --rm --device=/dev/kfd --device=/dev/dri \
+#       --group-add=video --group-add=render \
+#       -v <models>:/models:ro -v <cache>:/cache \
+#       -p 127.0.0.1:8087:8087 <image> \
+#       --model_path /models/Qwen3-TTS-12Hz-1.7B-CustomVoice --host 0.0.0.0 --port 8087
+
+ARG ROCM_PYTORCH
+FROM ${ROCM_PYTORCH}
+
+ARG DEBIAN_FRONTEND=noninteractive
+# ffmpeg for mp3/opus encoding and atempo (speed); libsndfile for soundfile.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ffmpeg \
+        libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt /opt/qwen3tts/requirements.txt
+RUN python3 -m pip install --no-cache-dir -r /opt/qwen3tts/requirements.txt \
+    && python3 -m pip check \
+    && python3 -c "import torch; v = torch.version.hip; print('torch', torch.__version__, 'hip', v); assert v, 'FATAL: torch without ROCm'"
+
+ENV HF_HOME=/cache \
+    HF_HUB_ENABLE_HF_TRANSFER=0 \
+    PYTHONUNBUFFERED=1
+
+COPY qwen3tts_server.py /opt/qwen3tts/qwen3tts_server.py
+RUN mkdir -p /cache && chmod 0777 /cache
+
+EXPOSE 8087
+ENTRYPOINT ["python3", "/opt/qwen3tts/qwen3tts_server.py"]
+CMD ["--help"]

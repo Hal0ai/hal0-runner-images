@@ -1,48 +1,33 @@
-# hal0-toolbox-flm — FastFlowLM (FLM) on AMD Strix Halo XDNA2 NPU.
+# check=skip=InvalidDefaultArgInFrom
+# hal0-runner-flm: FastFlowLM (FLM) on the AMD XDNA 2 NPU (Strix Halo).
 #
-# Target image:    ghcr.io/<owner>/hal0-toolbox-flm:v1
-# Local dev tag:   hal0-toolbox-flm:dev
+# Build it with `python3 scripts/runner.py build flm`. Every pin (base image
+# digest, xdna-driver/XRT commit, FastFlowLM commit, Rust toolchain) comes
+# from manifest.toml as --build-arg; the ARGs here have no defaults.
 #
-# Provider contract (src/hal0/providers/flm.py):
+# Contract with hal0 (src/hal0/providers/flm.py):
 #   - binary path:      /usr/local/bin/flm
 #   - subcommand:       `flm serve <model_tag> --port N --host 0.0.0.0 --ctx-len C`
 #   - endpoints:        /v1/models, /v1/chat/completions, /v1/embeddings,
 #                       /v1/audio/transcriptions (when --asr is enabled)
-#   - runtime devices:  /dev/accel (XDNA2 NPU), /dev/dri (iGPU helpers)
+#   - runtime devices:  /dev/accel (XDNA 2 NPU), /dev/dri (iGPU helpers)
 #   - runtime ulimits:  --ulimit memlock=-1:-1 (NPU buffer pinning)
-#   - model cache:      /root/.config/flm (bind-mount via slot_cfg._paths.flm_cache)
+#   - model cache:      ~/.config/flm, bind-mounted by the slot
 #
-# Upstream: https://github.com/FastFlowLM/FastFlowLM — Apache 2.0
-# Driver:   https://github.com/amd/xdna-driver (XRT + xdna NPU plugin)
-# Reference: https://github.com/hpenedones/fastflowlm-docker (3-stage build,
-#            ~440MB final, ~15-25 min build time on a fast box).
-#
-# HOST REQUIREMENTS (cannot be satisfied inside the image):
-#   - Linux kernel ≥ 6.11 with `amdxdna` loaded
-#   - NPU firmware ≥ 1.1.0.0
-#   - /dev/accel/accel0 visible on the host
-#
-# Build:
-#   docker build -t hal0-toolbox-flm:dev -f packaging/toolbox/flm.Dockerfile .
-#
-# Smoke (on a Strix Halo host with NPU passthrough):
-#   docker run --rm --device=/dev/accel --device=/dev/dri \
-#       --ulimit memlock=-1:-1 --group-add video --group-add render \
-#       hal0-toolbox-flm:dev flm validate
-#
-# NOTE: This Dockerfile builds FLM + XRT from source. Build hosts WITHOUT
-# the xdna driver kernel headers will still compile cleanly — the
-# xdna-driver userspace bits are headers + libraries, not kernel modules.
-# Only RUNTIME requires the host kernel + /dev/accel.
+# Host requirements (cannot be met inside the image): the amdxdna kernel
+# driver, NPU firmware >= 1.1.0.0, and /dev/accel/accel0 on the host. The
+# build itself needs none of them; only running the image does.
+
+ARG UBUNTU
 
 # ─── Stage 1 — XRT + xdna-driver userspace builder ────────────────────────────
-FROM ubuntu:24.04 AS xrt-builder
+FROM ${UBUNTU} AS xrt-builder
 
 ARG DEBIAN_FRONTEND=noninteractive
-# Pinned to the Ryzen AI 1.7.1 stable pairing (xdna-driver 2.21.75 ↔ XRT
-# 2.21.75), matching the CT105 host's libxrt. Was `main` (unreproducible,
-# drifted to XRT 2.23.0). Tag verified to exist upstream.
-ARG XDNA_REF=2.21.75
+# xdna-driver at the Ryzen AI 1.7.1 stable pairing (xdna-driver 2.21.75 with
+# XRT 2.21.75), pinned by commit in manifest.toml.
+ARG XDNA_REPO
+ARG XDNA_REF
 
 # Minimal bootstrap deps — just enough to clone the repo and run XRT's
 # own dependency installer. After three rounds of whack-a-mole with
@@ -64,7 +49,7 @@ WORKDIR /src
 # `submodule update` then fails to switch it ("Unable to checkout <sha> in
 # submodule path 'xrt'"). Initialising submodules post-checkout fetches the
 # tag's pinned XRT commit cleanly.
-RUN git clone https://github.com/amd/xdna-driver.git . \
+RUN git clone "${XDNA_REPO}" . \
     && git checkout "${XDNA_REF}" \
     && git submodule update --init --recursive
 
@@ -106,12 +91,12 @@ RUN mkdir -p build && cd build \
     && make install
 
 # ─── Stage 2 — FLM builder ────────────────────────────────────────────────────
-FROM ubuntu:24.04 AS flm-builder
+FROM ${UBUNTU} AS flm-builder
 
 ARG DEBIAN_FRONTEND=noninteractive
-# Pinned to v0.9.44 (portable Linux support, 2026-07) — matches the host
-# model cache and adds portable Linux build alongside per-distro .deb.
-ARG FLM_REF=v0.9.44
+# FastFlowLM release v0.9.44, pinned by commit in manifest.toml.
+ARG FLM_REPO
+ARG FLM_REF
 
 # Pull the freshly-built XRT in so FLM can link against it.
 COPY --from=xrt-builder /opt/xilinx/xrt /opt/xilinx/xrt
@@ -149,8 +134,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # that requires rustc >= 1.85 — the floor moved twice while debugging:
 # `monostate v0.1.18` needs 1.79, and `unicode-segmentation v1.13.2`
 # (pulled transitively) needs 1.85. Pinning to 1.85.0 stable keeps
-# the build reproducible.
-ARG RUST_VERSION=1.85.0
+# the build reproducible. The version comes from manifest.toml.
+ARG RUST_VERSION
 ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
     PATH=/usr/local/cargo/bin:${PATH}
@@ -159,8 +144,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
     && rustc --version && cargo --version
 
 WORKDIR /src
-RUN git clone --recurse-submodules \
-        https://github.com/FastFlowLM/FastFlowLM.git . \
+RUN git clone --recurse-submodules "${FLM_REPO}" . \
     && git checkout "${FLM_REF}" \
     && git submodule update --init --recursive
 
@@ -179,7 +163,7 @@ RUN cmake --preset linux-default \
     && cmake --install build
 
 # ─── Stage 3 — runtime ────────────────────────────────────────────────────────
-FROM ubuntu:24.04 AS runtime
+FROM ${UBUNTU} AS runtime
 
 ARG DEBIAN_FRONTEND=noninteractive
 

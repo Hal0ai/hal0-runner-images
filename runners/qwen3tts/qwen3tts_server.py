@@ -1,7 +1,7 @@
 """qwen3tts-server — FastAPI wrapper around the qwen-tts package.
 
 Implements the same OpenAI-compatible contract the hal0 TTS path expects
-(mirrors packaging/toolbox/kokoro/kokoro_server.py), so this slot is a
+(mirrors runners/kokoro/kokoro_server.py), so this slot is a
 drop-in alternative voice engine alongside Kokoro:
 
   GET  /health                  -> {status, model_loaded, ...}
