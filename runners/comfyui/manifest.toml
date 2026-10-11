@@ -54,7 +54,7 @@ GGUF_REF = "6ea2651e7df66d7585f6ffee804b20e92fb38b8a"
 [verification]
 boxes = ["the Strix Halo box (kfd present)"]
 probes = [
-    "the build's non-ROCm-torch assertion and `pip check` pass (part of the Containerfile)",
+    "the build's non-ROCm-torch assertion, `pip check` and check_custom_nodes.py (every package pinned, every bundled custom node loads) pass (part of the Containerfile)",
     "ComfyUI starts; its log shows AMD arch gfx1151, the full unified-memory VRAM pool and NORMAL_VRAM",
     "the AMDGPUMonitor, essentials and GGUF custom nodes load",
     "one SDXL (or Flux) image generation through hal0 completes",
