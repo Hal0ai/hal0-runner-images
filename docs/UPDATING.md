@@ -105,12 +105,20 @@ Then it opens two PRs and merges neither:
 - **Hal0ai/hal0:** the runner's row in the pin table of `manifest.json`, and no
   other file (the job aborts if anything else changed).
 
+A llama.cpp bump moves `standard`, `cpu` and `cuda` together, and hal0's release
+gate (`python -m hal0.runners.pins --check-release`) fails while they name
+different `b<N>` releases. So promote all three for one bump: three dispatches,
+three hal0 PRs (each edits a different row; rebase the later ones). The gate
+stays red until the last one merges.
+
 `cuda` has no recipe here (it pins ggml-org's own image). Promote it with the
 extra `tag` input; it then checks the digest and tag in the registry but cannot
 check build provenance.
 
 The field names hal0 expects live in one commented block, `ci/hal0_pins.py`
-(`HAL0_PIN_TABLE`, `HAL0_FIELDS`, `HAL0_TAG_IS_FULL_REF`). The GHCR retention
+(`HAL0_PIN_TABLE`, `HAL0_FIELDS`): hal0's `manifest.json` has a top-level `runners`
+object, and each row has exactly `image` (bare repository), `tag` (bare tag),
+`digest` and `lanes_gated`. Promote writes those four fields for one runner. The GHCR retention
 sweep reads the same table, so it never deletes an image hal0 pins.
 
 ## 6. Boxes

@@ -251,13 +251,15 @@ class PromoteTests(unittest.TestCase):
 
     def test_hal0_pin_edit_updates_one_row_and_keeps_the_rest(self):
         raw = json.dumps({"version": 1, hal0_pins.HAL0_PIN_TABLE: {
-            "standard": {"image": "old", "tag": "old", "digest": "old", "_notes": "keep me"},
-            "cpu": {"image": "i", "tag": "t", "digest": "d"},
+            "standard": {"image": "old", "tag": "old", "digest": "old", "lanes_gated": [], "_notes": "keep me"},
+            "cpu": {"image": "i", "tag": "t", "digest": "d", "lanes_gated": ["cpu"]},
         }}, indent=2) + "\n"
         out = json.loads(promote.edit_hal0_pins(raw, self.RESULT))
         row = out[hal0_pins.HAL0_PIN_TABLE]["standard"]
         self.assertEqual(row[hal0_pins.HAL0_FIELDS["digest"]], DIGEST)
         self.assertEqual(row[hal0_pins.HAL0_FIELDS["image"]], self.RESULT["image"])
+        self.assertEqual(row[hal0_pins.HAL0_FIELDS["tag"]], self.RESULT["tag"])
+        self.assertEqual(row[hal0_pins.HAL0_FIELDS["lanes_gated"]], ["rocm", "vulkan"])
         self.assertEqual(row["_notes"], "keep me")
         self.assertEqual(out[hal0_pins.HAL0_PIN_TABLE]["cpu"]["tag"], "t")
 
@@ -279,7 +281,8 @@ class PromoteTests(unittest.TestCase):
             "ghcr.io/hal0ai/hal0-runner-standard:b1-r1234567", f"ghcr.io/hal0ai/hal0-runner-standard@{DIGEST}"])
         for bad in ("not json", "[]", "{}", json.dumps({hal0_pins.HAL0_PIN_TABLE: {}}),
                     json.dumps({hal0_pins.HAL0_PIN_TABLE: {"a": "x"}}),
-                    json.dumps({hal0_pins.HAL0_PIN_TABLE: {"a": {"tag": "t"}}})):
+                    json.dumps({hal0_pins.HAL0_PIN_TABLE: {"a": {"tag": "t"}}}),
+                    json.dumps({hal0_pins.HAL0_PIN_TABLE: {"a": {"image": "ghcr.io/x/y:t", "tag": "t"}}})):
             with self.assertRaises(SystemExit):
                 hal0_pins.parse_pin_table(bad, "u")
 
