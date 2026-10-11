@@ -122,8 +122,49 @@ def test_transport_errors() -> None:
         check("**2 alert(s).**" in out, f"{exc!r}: render must still produce the report")
 
 
+def test_truncated_bodies() -> None:
+    """A response cut off mid-body becomes an alert row, not a crash (CodeRabbit on #17)."""
+    import http.client
+    import io
+    import urllib.request
+
+    class Resp(io.BytesIO):
+        status = 200
+
+        def __init__(self, data: bytes = b"", exc: Exception | None = None):
+            super().__init__(data)
+            self._exc = exc
+
+        def read(self, *a):
+            if self._exc is not None:
+                raise self._exc
+            return super().read(*a)
+
+    cases = {
+        "IncompleteRead": lambda: Resp(exc=http.client.IncompleteRead(b'{"info": {"vers', 40)),
+        "partial JSON": lambda: Resp(b'{"info": {"version": "0.4'),
+    }
+    real = urllib.request.urlopen
+    for name, make in list(cases.items()) + [("RemoteDisconnected", None)]:
+        def fake(*_a, _make=make, **_k):
+            if _make is None:
+                raise http.client.RemoteDisconnected("Remote end closed connection without response")
+            return _make()
+        urllib.request.urlopen = fake
+        try:
+            rows = [sw.probe(GH), sw.probe(PY)]
+        except Exception as e:  # noqa: BLE001 - the point is that nothing escapes
+            failures.append(f"{name}: probe raised {e!r}")
+            continue
+        finally:
+            urllib.request.urlopen = real
+        for r in rows:
+            check(r.alert and "no answer" in r.state, f"{name}: {r.target.key} -> {r.state!r}/{r.alert}")
+
+
 def main() -> int:
-    for t in (test_newest_release, test_classify, test_targets, test_render, test_transport_errors):
+    for t in (test_newest_release, test_classify, test_targets, test_render, test_transport_errors,
+              test_truncated_bodies):
         before = len(failures)
         t()
         print(f"{'FAIL' if len(failures) > before else 'ok  '} {t.__name__}")

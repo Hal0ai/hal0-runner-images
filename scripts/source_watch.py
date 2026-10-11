@@ -34,6 +34,7 @@ Alerts are the cases that need attention now, not merely an update:
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import re
@@ -166,10 +167,12 @@ def _get(url: str) -> tuple[int, object | None]:
             return resp.status, json.load(resp)
     except urllib.error.HTTPError as e:
         return e.code, None
-    except (urllib.error.URLError, OSError, ValueError) as e:
+    except (urllib.error.URLError, OSError, http.client.HTTPException, ValueError) as e:
         # DNS failure, refused connection, timeout (TimeoutError is an
-        # OSError) or a body that is not JSON: report it, keep going, so one
-        # unreachable upstream never takes the whole report down.
+        # OSError), a connection dropped mid-response (RemoteDisconnected), a
+        # truncated body (http.client.IncompleteRead, an HTTPException rather
+        # than an OSError) or a body that is not complete JSON: report it and
+        # keep going, so one bad upstream never takes the whole report down.
         print(f"source_watch: {url}: {e!r}", file=sys.stderr)
         return NO_ANSWER, None
 
