@@ -9,11 +9,13 @@ runners/llama.cpp.toml (`[llama_cpp]` version, ref, ref_description). --apply
 rewrites that file when ggml-org's newest `b<N>` release is newer, and nothing
 else: the runner manifests only point at it.
 
-The `cuda` row of images.json follows the pin through its `candidate`. ggml-org
-does not publish server-cuda for every release, so the candidate is the newest
-`server-cuda-b<M>` tag in GHCR with M at or below the pinned release, with the
-digest that tag resolves to now. When only cuda has a newer tag, the PR moves
-only that candidate. Nothing is gated or pinned here: promote.yml does that.
+The `cuda` row of images.json follows the pin loosely. ggml-org does not publish
+server-cuda for every release, so the row takes the newest `server-cuda-b<M>` tag
+in GHCR with M at or below the pinned release, as `tag` and `digest` (the digest
+that tag resolves to now). There is no hardware gate for it (the CUDA lane is
+hidden in hal0), so it is set here, ungated, as the recipes schema describes.
+When only cuda has a newer tag, the PR moves only that row. hal0's own pin for
+cuda still moves through promote.yml.
 
 The other runners are report-only; that is scripts/source_watch.py, which the
 workflow runs next to this. This builds nothing, pushes nothing and calls only
@@ -66,8 +68,8 @@ class Bump:
     commit: str | None
     url: str | None
     compare_url: str | None
-    cuda_previous: str | None             # cuda candidate tag before (or its pinned tag)
-    cuda_tag: str | None                  # new cuda candidate tag, else None
+    cuda_previous: str | None             # the cuda row's tag before
+    cuda_tag: str | None                  # the cuda row's new tag, else None
     cuda_digest: str | None = None
     branch: str = ""
     title: str = ""
@@ -166,12 +168,6 @@ def cuda_row(doc: dict) -> dict | None:
     return rows[0] if len(rows) == 1 else None
 
 
-def cuda_reference(row: dict) -> str | None:
-    """The newest cuda tag already recorded: the candidate's, else the pinned one."""
-    cand = (row.get("candidate") or {}).get("tag")
-    return cand or row.get("tag")
-
-
 def apply_cuda(root: Path, tag: str, digest: str) -> str:
     path = root / CATALOGUE
     raw = path.read_text()
@@ -179,7 +175,8 @@ def apply_cuda(root: Path, tag: str, digest: str) -> str:
     row = cuda_row(doc)
     if row is None:
         raise lib.CIError(f"{CATALOGUE}: expected one {CUDA_ID!r} row")
-    row["candidate"] = {"tag": tag, "digest": digest}
+    row["tag"] = tag
+    row["digest"] = digest
     path.write_text(lib.dump_like(doc, raw))
     return CATALOGUE
 
@@ -200,7 +197,7 @@ def run(
     path = root / CATALOGUE
     row = cuda_row(json.loads(path.read_text())) if path.is_file() else None
     if row is not None:
-        cuda_prev = cuda_reference(row)
+        cuda_prev = row.get("tag")
         best = newest_cuda_tag((cuda_tags or (lambda: lib.ghcr_tags(CUDA_IMAGE)))(), release)
         if best and (cuda_prev is None or is_newer(best, cuda_prev)):
             cuda_new = best
@@ -237,9 +234,11 @@ def pr_body(b: Bump) -> str:
                 f"[`{b.tag}`]({b.url}) (`{b.commit[:12]}`).", "",  # type: ignore[index]
                 f"Upstream changes: {b.compare_url}", ""]
     if b.cuda_tag:
-        out += [f"Sets the `cuda` row's candidate in `images.json` to `{b.cuda_tag}` (`{b.cuda_digest}`), "
+        out += [f"Sets the `cuda` row of `images.json` to `{b.cuda_tag}` (`{b.cuda_digest}`), "
                 f"the newest `server-cuda-b<M>` ggml-org has published with M at or below the pinned release "
-                f"(`{b.release}`); it was `{b.cuda_previous}`. ggml-org skips releases, so it can lag the pin.", ""]
+                f"(`{b.release}`); it was `{b.cuda_previous}`. ggml-org skips releases, so it can lag the pin. "
+                f"There is no hardware gate for it (the CUDA lane is hidden in hal0); hal0's own pin for cuda "
+                f"moves through the Promote runner image workflow.", ""]
     out += ["Files changed: " + ", ".join(f"`{f}`" for f in b.files) + ".", ""]
     if b.tag:
         out += ["Not changed here, for a person to do in this PR:", "",
@@ -257,7 +256,7 @@ def pr_body(b: Bump) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--apply", action="store_true", help="rewrite the pin file and the cuda candidate")
+    ap.add_argument("--apply", action="store_true", help="rewrite the pin file and the cuda row")
     ap.add_argument("--json-file", default="")
     ap.add_argument("--body-file", default="", help="write the bump PR description here")
     args = ap.parse_args(argv)

@@ -23,11 +23,12 @@ ggml-org's newest `b<N>` release with the pin and, if newer, opens **one** PR th
 rewrites that file, and nothing else in `runners/`. An older open bump PR is
 closed as superseded.
 
-The external `cuda` row of `images.json` follows through its `candidate`:
-ggml-org does not publish `server-cuda` for every release, so the candidate is
-the newest `server-cuda-b<M>` tag in GHCR with M at or below the pinned release,
-with the digest that tag resolves to (the registry's tag list is read in full to
-find it). When only `cuda` has a newer tag, the PR moves only that candidate.
+The external `cuda` row of `images.json` follows loosely: ggml-org does not publish
+`server-cuda` for every release, so the row takes the newest `server-cuda-b<M>` tag
+in GHCR with M at or below the pinned release, as `tag` and `digest` (the registry's
+tag list is read in full to find it). There is no hardware gate for it (the CUDA lane
+is hidden in hal0), so it is set here, ungated. When only `cuda` has a newer tag,
+the PR moves only that row.
 
 The PR does not touch the `#:` notes in the pin file or the `[verification]`
 probes; its checklist lists them for a person. Read the upstream changes before
@@ -125,7 +126,9 @@ Dispatch on `main` with two inputs:
 **A llama.cpp bump is one run for the whole group**: `standard` and `cpu` (the same
 `b<N>` release) and `cuda`. ggml-org does not publish `server-cuda` for every
 release, so `cuda` is promoted with the newest `server-cuda-b<M>` tag that exists,
-M at or below N. Release-watch keeps the `cuda` row of `images.json` on that tag.
+M at or below N (the tag the bump PR put in `images.json`). It has no hardware gate,
+so it needs no gate report: leave it out of `gate_reports`, or leave it out of a
+group report, and it is pinned ungated with `lanes_gated` empty.
 
 ```
 promotions:   standard=sha256:<a>,cpu=sha256:<b>,cuda=server-cuda-b11541@sha256:<c>
@@ -201,7 +204,8 @@ Defined in the docstring of `ci/lib.py`. If the layout changes, change it there.
   for a rebuild. The keys are listed at the top of `ci/release_watch.py`.
 - `images.json` is `hal0.runner-images.v2`: a `runners` array keyed by `id`, with
   `image`, `tag`, `digest` (null until gated), `candidate`, `gate_report` and
-  `lanes_gated`. Promote sets `tag` and `digest`, clears `candidate`, and sets
+  `lanes_gated`. Release-watch sets the external `cuda` row's `tag` and `digest`
+  directly. Promote sets `tag` and `digest`, clears `candidate`, and sets
   `gate_report` and `lanes_gated`; the lanes must be among the entry's `backends`.
 
 ## Adding a runner

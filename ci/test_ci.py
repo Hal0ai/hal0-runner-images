@@ -203,11 +203,11 @@ class ReleaseWatchTests(unittest.TestCase):
         self.assertEqual(rw.newest_cuda_tag(tags, "b11500"), "server-cuda-b9")
         self.assertIsNone(rw.newest_cuda_tag(["server-b1"], "b11552"))
 
-    def test_bump_sets_the_cuda_candidate_to_the_newest_tag_that_exists(self):
+    def test_bump_sets_the_cuda_row_to_the_newest_tag_that_exists(self):
         with tempfile.TemporaryDirectory() as t:
             root = Path(t)
             make_tree(root, {"standard": {}}, pin={"version": "b11510", "ref": OLD_SHA})
-            self._catalogue(root, candidate={"tag": "server-cuda-b11515", "digest": DIGEST})
+            self._catalogue(root, tag="server-cuda-b11515")
             tags = ["server-cuda-b11515", "server-cuda-b11541", "server-cuda-b11553"]  # b11553 is ahead of b11552
             bump = rw.run(root, self._api(), apply=True, cuda_tags=lambda: tags, cuda_digest=lambda tag: "sha256:" + "d" * 64)
             self.assertEqual((bump.tag, bump.cuda_tag), ("b11552", "server-cuda-b11541"))
@@ -215,8 +215,8 @@ class ReleaseWatchTests(unittest.TestCase):
             self.assertEqual(bump.branch, "bot/bump-llama-cpp-b11552-cuda-b11541")
             self.assertEqual(sorted(bump.files), ["images.json", "runners/llama.cpp.toml"])
             row = json.loads((root / "images.json").read_text())["runners"][1]
-            self.assertEqual(row["candidate"], {"tag": "server-cuda-b11541", "digest": "sha256:" + "d" * 64})
-            self.assertIsNone(row["tag"])  # the gated pin is promote's to move
+            self.assertEqual((row["tag"], row["digest"]), ("server-cuda-b11541", "sha256:" + "d" * 64))
+            self.assertIsNone(row["candidate"])
             self.assertIn("server-cuda-b11541", rw.pr_body(bump))
 
     def test_cuda_alone_moves_when_the_pin_is_current_and_nothing_newer_means_no_pr(self):
@@ -231,7 +231,7 @@ class ReleaseWatchTests(unittest.TestCase):
             self.assertEqual(bump.branch, "bot/bump-llama-cpp-cuda-b11541")
             self.assertEqual(bump.files, ["images.json"])
             self.assertEqual((root / "runners/llama.cpp.toml").read_text(), before)
-            # the candidate now holds the newest tag: running again finds nothing to do
+            # the row now holds the newest tag: running again finds nothing to do
             self.assertIsNone(rw.run(root, self._api(), apply=True, cuda_tags=lambda: ["server-cuda-b11541"], cuda_digest=digest))
 
 
@@ -344,6 +344,23 @@ class PromoteTests(unittest.TestCase):
                      "cuda=https://x.test/g.json https://x.test/all.json"):  # cuda is not being promoted
             with self.assertRaises(SystemExit):
                 promote.parse_gate_reports(text, keys)
+
+    def test_external_runner_may_come_without_a_gate_report(self):
+        keys = ["standard", "cuda"]
+        urls = promote.parse_gate_reports("standard=https://x.test/s.json", keys, frozenset({"cuda"}))
+        self.assertEqual(urls, {"standard": "https://x.test/s.json", "cuda": None})
+        with self.assertRaises(SystemExit):  # a built runner always needs one
+            promote.parse_gate_reports("cuda=https://x.test/c.json", keys, frozenset({"cuda"}))
+        self.assertTrue(promote.has_entry({"runners": [{"runner": "cuda"}]}, "cuda"))
+        self.assertFalse(promote.has_entry({"runners": [{"runner": "standard"}]}, "cuda"))
+        # an ungated item still lands in images.json with a null report and no lanes
+        raw = json.dumps({"runners": [{"id": "cuda", "image": "ghcr.io/ggml-org/llama.cpp", "backends": ["cuda"],
+                                       "tag": None, "digest": None, "gate_report": None, "lanes_gated": []}]})
+        item = {"runner": "cuda", "image": "ghcr.io/ggml-org/llama.cpp", "tag": "server-cuda-b11541", "digest": DIGEST,
+                "external": True, "source_commit": "", "gate_report": None, "gate_summary": "no hardware gate", "lanes_gated": []}
+        row = json.loads(promote.edit_catalogue(raw, [item]))["runners"][0]
+        self.assertEqual((row["tag"], row["gate_report"], row["lanes_gated"]), ("server-cuda-b11541", None, []))
+        self.assertNotIn("- gate report:", promote.pr_body([item]))
 
     def test_group_report_picks_each_runners_entry(self):
         def entry(k, d):

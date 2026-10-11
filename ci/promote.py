@@ -13,7 +13,8 @@ images.json change and ONE hal0 change.
 
 `verify` refuses any item that is not (a) an existing image in its package
 (an external runner such as cuda, which has no recipe here, is checked for
-existence and tag only, and is written `key=<tag>@<digest>`), (b) built by
+existence and tag only, is written `key=<tag>@<digest>`, and may come without a
+gate report: there is no hardware gate for it, and its lanes stay empty), (b) built by
 .github/workflows/build.yml on refs/heads/main (checked through the build's
 signed provenance attestation, not through the tag), (c) reachable under its
 immutable tag at that same digest, and (d) backed by a gate report that is
@@ -147,8 +148,11 @@ def parse_promotions(text: str) -> list[dict]:
     return items
 
 
-def parse_gate_reports(text: str, keys: list[str]) -> dict[str, str]:
-    """key -> report URL. One bare URL covers every key; `key=URL` names one."""
+def parse_gate_reports(text: str, keys: list[str], optional: frozenset[str] = frozenset()) -> dict[str, str | None]:
+    """key -> report URL. One bare URL covers every key; `key=URL` names one.
+
+    A key in `optional` (an external runner with no hardware gate) may have none.
+    """
     per_key: dict[str, str] = {}
     default = ""
     for tok in _tokens(text):
@@ -164,10 +168,10 @@ def parse_gate_reports(text: str, keys: list[str]) -> dict[str, str]:
     unknown = sorted(set(per_key) - set(keys))
     if unknown:
         raise lib.CIError(f"gate report given for {unknown}, which are not being promoted")
-    missing = [k for k in keys if k not in per_key and not default]
+    missing = [k for k in keys if k not in per_key and not default and k not in optional]
     if missing:
         raise lib.CIError(f"no gate report for {missing}")
-    return {k: per_key.get(k) or default for k in keys}
+    return {k: per_key.get(k) or default or None for k in keys}
 
 
 LLAMA_GROUP = ("standard", "cpu")   # built here, always the same b<N> release
@@ -227,7 +231,8 @@ def pr_body(items: list[dict]) -> str:
             out.append("- external image: no build provenance from this repository to verify")
         if i["source_commit"]:
             out.append(f"- built from `{i['source_commit']}` of Hal0ai/hal0-runner-images (signed build provenance, refs/heads/main)")
-        out.append(f"- gate report: {i['gate_report']}")
+        if i["gate_report"]:
+            out.append(f"- gate report: {i['gate_report']}")
         out.append(f"- gate result: {i['gate_summary']}\n")
     out.append("Promoted by the Promote runner image workflow in Hal0ai/hal0-runner-images "
                "(docs/UPDATING.md). It verified that each digest exists, that the build workflow on main "
@@ -333,7 +338,15 @@ def validate_gate_report(report: dict, runner: str, digest: str) -> tuple[str, l
 TAG_CHARS = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")
 
 
-def verify_item(item: dict, report_doc: object, report_url: str, built_keys: list[str]) -> dict:
+def has_entry(doc: object, runner: str) -> bool:
+    if not isinstance(doc, dict):
+        return False
+    if isinstance(doc.get("runners"), list):
+        return any(isinstance(r, dict) and r.get("runner") == runner for r in doc["runners"])
+    return doc.get("runner") == runner
+
+
+def verify_item(item: dict, report_doc: object, report_url: str | None, built_keys: list[str]) -> dict:
     key, digest = item["runner"], item["digest"]
     if not lib.KEY_RE.match(key):
         raise lib.CIError(f"invalid runner key {key!r}")
@@ -365,7 +378,12 @@ def verify_item(item: dict, report_doc: object, report_url: str, built_keys: lis
         raise lib.CIError(f"{image}:{tag} points at {digest_of(by_tag)}, not {digest}: the tag moved")
 
     source_commit = "" if external else verify_attestation(image, digest)["source_commit"]
-    summary, lanes = validate_gate_report(report_for(report_doc, key), key, digest)
+    if external and (report_url is None or not has_entry(report_doc, key)):
+        # No hardware gate for an external image (the CUDA lane is hidden in hal0):
+        # its digest and tag were verified above, and nothing is claimed about lanes.
+        summary, lanes, report_url = "no hardware gate (external image); registry digest and tag verified", [], None
+    else:
+        summary, lanes = validate_gate_report(report_for(report_doc, key), key, digest)
     return {
         "runner": key, "image": image, "tag": tag, "digest": digest, "external": external,
         "source_commit": source_commit, "gate_report": report_url, "gate_summary": summary,
@@ -375,10 +393,11 @@ def verify_item(item: dict, report_doc: object, report_url: str, built_keys: lis
 
 def cmd_verify(args: argparse.Namespace) -> int:
     items = parse_promotions(args.promotions)
-    urls = parse_gate_reports(args.gate_reports, [i["runner"] for i in items])
-    docs = {u: fetch_gate_report(u, args.token) for u in set(urls.values())}
     built = lib.runner_keys()
-    results = [verify_item(i, docs[urls[i["runner"]]], urls[i["runner"]], built) for i in items]
+    urls = parse_gate_reports(args.gate_reports, [i["runner"] for i in items],
+                              frozenset(i["runner"] for i in items if i["runner"] not in built))
+    docs = {u: fetch_gate_report(u, args.token) for u in set(urls.values()) if u}
+    results = [verify_item(i, docs.get(urls[i["runner"]]), urls[i["runner"]], built) for i in items]
     branch, title = describe(results)  # also refuses a mismatched llama.cpp group
 
     Path(args.out).write_text(json.dumps({"items": results}, indent=2) + "\n")
@@ -394,7 +413,7 @@ def _load_result(path: str) -> list[dict]:
         raise lib.CIError("result file has no items")
     for item in items:
         for k in ("runner", "image", "tag", "digest", "gate_report", "lanes_gated"):
-            if k not in item or item[k] in ("", None):
+            if k not in item or (item[k] in ("", None) and not (k == "gate_report" and item.get("external"))):
                 raise lib.CIError(f"result item lacks {k!r}")
         tag_ok = TAG_CHARS.match(item["tag"]) if item.get("external") else lib.TAG_RE.match(item["tag"])
         if not tag_ok or not lib.DIGEST_RE.match(item["digest"]):

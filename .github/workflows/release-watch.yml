@@ -5,8 +5,8 @@ name: Release watch
 #   llama.cpp      standard and cpu build from one release pin,
 #                  runners/llama.cpp.toml. If ggml-org has a newer b<N> release
 #                  this opens ONE bump PR that rewrites it, and moves the cuda
-#                  row's candidate in images.json to the newest server-cuda-b<M>
-#                  that exists (M <= N; ggml-org skips releases).
+#                  row of images.json to the newest server-cuda-b<M> that
+#                  exists (M <= N; ggml-org skips releases).
 #   everything else report only: scripts/source_watch.py writes a report and one
 #                  tracking issue lists newer upstream versions.
 #

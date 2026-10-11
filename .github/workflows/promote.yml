@@ -10,7 +10,8 @@ name: Promote runner image
 #                   standard=sha256:..,cpu=sha256:..,cuda=server-cuda-b11541@sha256:..
 #                 (ggml-org skips releases: cuda takes the newest server-cuda-b<M>, M <= N)
 #   gate_reports  one https URL covering every runner, or key=URL for each
-#                 (JSON, schema hal0.gate-report.v1; a group document is fine)
+#                 (JSON, schema hal0.gate-report.v1; a group document is fine).
+#                 An external runner (cuda) has no hardware gate and may be left out.
 #
 # It verifies every item, then opens TWO pull requests and merges neither:
 #   1. this repo:  images.json  each runner's tag + digest (candidate cleared),
