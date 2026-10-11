@@ -12,7 +12,8 @@ stdlib only. Every runner is built the same way, from its manifest.toml:
     python3 scripts/runner.py build <key> --check     # stage only: source + patches, no build
 
 The tag is `<image.version>-r<sha7>`, where sha7 is the last commit that
-touched runners/<key>/. An unchanged recipe therefore always maps to the
+touched runners/<key>/ or the shared pin file it uses (runners/llama.cpp.toml
+for standard and cpu, whose [source].pin names it). An unchanged recipe therefore always maps to the
 same tag, and a published tag is never pushed again. Computing it needs the
 full git history (actions/checkout with fetch-depth: 0).
 
@@ -54,11 +55,40 @@ def keys() -> list[str]:
     return sorted(p.name for p in RUNNERS.iterdir() if (p / "manifest.toml").is_file())
 
 
+def read_pin(name: str) -> dict:
+    """The [llama_cpp] table of a shared pin file under runners/ (e.g. llama.cpp.toml)."""
+    path = RUNNERS / name
+    if "/" in name or not path.is_file():
+        raise RecipeError(f"shared pin file runners/{name} does not exist")
+    return tomllib.loads(path.read_text())["llama_cpp"]
+
+
+def resolve(key: str, raw: dict) -> dict:
+    """Fill [source] and [image].version from the shared pin file, if the recipe uses one.
+
+    A recipe with `[source].pin = "llama.cpp.toml"` must not repeat repo, ref,
+    release or version: the pin file is the only place they live.
+    """
+    doc = {k: (dict(v) if isinstance(v, dict) else v) for k, v in raw.items()}
+    src = doc.get("source", {})
+    pin = src.get("pin")
+    if not pin:
+        return doc
+    dup = [k for k in ("repo", "ref", "release") if k in src] + (["version"] if "version" in doc.get("image", {}) else [])
+    if dup:
+        raise RecipeError(f"runners/{key}: uses the shared pin runners/{pin}, so it must not set {dup}")
+    shared = read_pin(pin)
+    src.update(repo=shared["repo"], ref=shared["ref"], release=shared["version"])
+    doc["source"] = src
+    doc.setdefault("image", {})["version"] = shared["version"]
+    return doc
+
+
 def load(key: str) -> dict:
     path = RUNNERS / key / "manifest.toml"
     if not path.is_file():
         raise RecipeError(f"unknown runner {key!r}: no {path.relative_to(ROOT)}")
-    doc = tomllib.loads(path.read_text())
+    doc = resolve(key, tomllib.loads(path.read_text()))
     problems = validate(key, doc)
     if problems:
         raise RecipeError("runners/{}/manifest.toml:\n  {}".format(key, "\n  ".join(problems)))
@@ -112,12 +142,21 @@ def validate(key: str, doc: dict) -> list[str]:
     return out
 
 
+def recipe_paths(key: str) -> list[str]:
+    """The paths a runner's build depends on: its directory plus any shared pin file."""
+    paths = [f"runners/{key}"]
+    pin = tomllib.loads((RUNNERS / key / "manifest.toml").read_text()).get("source", {}).get("pin")
+    if pin:
+        paths.append(f"runners/{pin}")
+    return paths
+
+
 def recipe_commit(key: str) -> tuple[str, bool]:
-    """(last commit touching runners/<key>, recipe dir has uncommitted changes)."""
-    rel = f"runners/{key}"
-    sha = subprocess.run(["git", "log", "-1", "--format=%H", "--", rel], cwd=ROOT,
+    """(last commit touching the recipe or its shared pin, uncommitted changes there)."""
+    rel = recipe_paths(key)
+    sha = subprocess.run(["git", "log", "-1", "--format=%H", "--", *rel], cwd=ROOT,
                          capture_output=True, text=True).stdout.strip()
-    status = subprocess.run(["git", "status", "--porcelain", "--", rel], cwd=ROOT,
+    status = subprocess.run(["git", "status", "--porcelain", "--", *rel], cwd=ROOT,
                             capture_output=True, text=True).stdout.strip()
     if not sha:
         return "0" * 40, True

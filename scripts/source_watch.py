@@ -15,6 +15,10 @@ upstream for its newest release:
   kind = "pypi"            newest version of [source].package on PyPI
                            (compared with [source].version)
 
+Runners whose [source].pin names a shared pin file (standard and cpu use
+runners/llama.cpp.toml, which the external cuda entry follows too) are
+reported once, as that file; the release watch bumps it in one pull request.
+
 For git sources it also checks that the pinned commit still exists. It
 prints one markdown report and changes nothing; a person decides which
 bumps to make (docs/UPDATING.md).
@@ -54,6 +58,7 @@ class Target:
     pattern: str = ""  # github-release tag pattern
     package: str = ""  # PyPI package
     prereleases: bool = False  # github-release: count releases marked prerelease
+    followers: list[str] | None = None  # runners that follow this shared pin file
 
     @property
     def owner_repo(self) -> tuple[str, str]:
@@ -65,11 +70,18 @@ class Target:
 
 def load_targets() -> list[Target]:
     out = []
+    shared: dict[str, list[str]] = {}
+    tracks: dict[str, dict] = {}
     for manifest in sorted((ROOT / "runners").glob("*/manifest.toml")):
         doc = tomllib.loads(manifest.read_text())
         key = manifest.parent.name
         src = doc["source"]
         track = doc["lifecycle"]["track"]
+        if src.get("pin"):
+            # Follows a shared pin file: reported once, under the file's name.
+            shared.setdefault(src["pin"], []).append(key)
+            tracks[src["pin"]] = track
+            continue
         if track["kind"] == "github-release":
             # A commit pinned between releases (no [source].release) is
             # compared by the version it reports ([image].version).
@@ -81,7 +93,13 @@ def load_targets() -> list[Target]:
             out.append(Target(key, "pypi", src["repo"], src["version"], package=src["package"]))
         else:
             raise SystemExit(f"runners/{key}: unknown [lifecycle.track].kind {track['kind']!r}")
-    return out
+    for pin, keys in sorted(shared.items()):
+        table = tomllib.loads((ROOT / "runners" / pin).read_text())["llama_cpp"]
+        track = tracks[pin]
+        out.append(Target(pin, "github-release", table["repo"], table["version"], commit=table["ref"],
+                          pattern=track["pattern"], prereleases=bool(track.get("include_prereleases")),
+                          followers=keys + ["cuda"]))
+    return sorted(out, key=lambda t: t.key)
 
 
 @dataclass
@@ -163,7 +181,10 @@ def render(rows: list[Row]) -> str:
         t = r.target
         where = t.package if t.kind == "pypi" else "/".join(t.owner_repo)
         state = f"⚠️ {r.state}" if r.alert else r.state
-        lines.append(f"| `{t.key}` | {where} ({t.kind}) | `{t.pinned}` | `{r.latest}` | {state} |")
+        if t.followers and not r.alert and r.state != "current":
+            state += " (bumped via llama.cpp.toml by the release watch)"
+        name = f"`{t.key}` ({', '.join(t.followers)})" if t.followers else f"`{t.key}`"
+        lines.append(f"| {name} | {where} ({t.kind}) | `{t.pinned}` | `{r.latest}` | {state} |")
     return "\n".join(lines) + "\n"
 
 

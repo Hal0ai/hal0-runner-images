@@ -63,8 +63,13 @@ def test_classify() -> None:
 
 def test_targets() -> None:
     targets = {t.key: t for t in sw.load_targets()}
-    for want in ("standard", "cpu", "flm", "kokoro", "moonshine", "comfyui", "qwen3tts"):
+    for want in ("llama.cpp.toml", "flm", "kokoro", "moonshine", "comfyui", "qwen3tts"):
         check(want in targets, f"load_targets() missing {want}")
+    for followed in ("standard", "cpu"):
+        check(followed not in targets, f"{followed} follows runners/llama.cpp.toml and must not be listed on its own")
+    pin = targets.get("llama.cpp.toml")
+    check(pin is not None and pin.followers == ["cpu", "standard", "cuda"] and pin.prereleases,
+          f"llama.cpp.toml row must list its followers and count prereleases, got {pin}")
     for t in targets.values():
         if t.kind == "github-release":
             t.owner_repo  # raises SystemExit on a non-GitHub URL
@@ -74,10 +79,15 @@ def test_targets() -> None:
 
 
 def test_render() -> None:
-    rows = [sw.classify(GH, "b101"), sw.classify(PY, None, 503)]
+    shared = sw.Target("llama.cpp.toml", "github-release", "https://github.com/acme/llama.cpp.git", "b100",
+                       pattern=r"^b[0-9]+$", followers=["cpu", "standard", "cuda"])
+    rows = [sw.classify(GH, "b101"), sw.classify(PY, None, 503), sw.classify(shared, "b100")]
     out = sw.render(rows)
+    check("`llama.cpp.toml` (cpu, standard, cuda)" in out, "render: shared pin row must name its followers")
     check("**1 alert(s).**" in out, "render: alert count missing")
     check("1 runner(s) have a newer release" in out, "render: update count missing")
+    out2 = sw.render([sw.classify(shared, "b101")])
+    check("bumped via llama.cpp.toml" in out2, "render: shared pin update must say the release watch bumps it")
     check("⚠️ upstream did not answer" in out, "render: alert row not marked")
 
 

@@ -1,0 +1,18 @@
+# The one llama.cpp release every llama.cpp runner uses.
+#
+# runners/standard and runners/cpu build from this pin ([source].pin in their
+# manifests), and the external `cuda` entry in images.json follows it with
+# ggml-org's own ghcr.io/ggml-org/llama.cpp:server-cuda-<version> image. One
+# change to this file moves all three. The weekly release watch rewrites it
+# when ggml-org publishes a newer bNNNNN release.
+
+[llama_cpp]
+repo = "https://github.com/ggml-org/llama.cpp.git"
+#: Release b11552 (2026-10-10). Picked up since b11510: #30103 (HIP flash
+#: attention race fix), #30257 (MTP together with mmproj), #30145 (Vulkan
+#: rms_norm). Gate risk items: #30210 (chat API refactor touching tool calls,
+#: grammar and reasoning-format) and #30159 (llama-server's default port is
+#: now 9931; runners/standard's entrypoint always passes --port).
+version = "b11552"
+ref = "23b0202a189c44a54625aadcb37a946dd1d6278d"
+ref_description = "release b11552: server: leave a busy slot untouched when a request pins it (#30295)"

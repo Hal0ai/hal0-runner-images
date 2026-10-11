@@ -24,22 +24,15 @@ tier = "default"
 
 [image]
 package = "ghcr.io/hal0ai/hal0-runner-standard"
-#: The llama.cpp release. Tag = <version>-r<recipe sha7>, e.g. b11552-r1a2b3c4.
-#: runners/cpu pins the same release; scripts/test_repo_consistency.py
-#: keeps the two in step.
-version = "b11552"
+#: version = the llama.cpp release from runners/llama.cpp.toml. Tag =
+#: <version>-r<sha7>, e.g. b11552-r1a2b3c4.
 
 [source]
-repo = "https://github.com/ggml-org/llama.cpp.git"
-#: Release b11552 (2026-10-10). Picked up since b11510: #30103 (HIP flash
-#: attention race fix), #30257 (MTP together with mmproj), #30145 (Vulkan
-#: rms_norm). Risk items the gate covers: #30210 (chat API refactor touching
-#: tool calls, grammar and reasoning-format) and #30159 (llama-server's
-#: default port is now 9931; the entrypoint always passes --port).
-ref = "23b0202a189c44a54625aadcb37a946dd1d6278d"
-release = "b11552"
+#: The llama.cpp repo, release and commit come from runners/llama.cpp.toml,
+#: shared with runners/cpu, runners/standard and the external cuda entry.
+pin = "llama.cpp.toml"
 #: Clone on the host into the build context's src/ and apply patches there,
-#: so `--check` needs no container runtime and CI can mirror the source.
+#: so `--check` needs no container runtime.
 checkout = true
 
 [build]

@@ -20,14 +20,15 @@ tier = "default"
 
 [image]
 package = "ghcr.io/hal0ai/hal0-runner-cpu"
-#: Must equal runners/standard [image].version (one llama.cpp release
-#: everywhere); scripts/test_repo_consistency.py enforces it.
-version = "b11552"
+#: version = the llama.cpp release from runners/llama.cpp.toml. Tag =
+#: <version>-r<sha7>, e.g. b11552-r1a2b3c4.
 
 [source]
-repo = "https://github.com/ggml-org/llama.cpp.git"
-ref = "23b0202a189c44a54625aadcb37a946dd1d6278d"
-release = "b11552"
+#: The llama.cpp repo, release and commit come from runners/llama.cpp.toml,
+#: shared with runners/cpu, runners/standard and the external cuda entry.
+pin = "llama.cpp.toml"
+#: Clone on the host into the build context's src/ and apply patches there,
+#: so `--check` needs no container runtime.
 checkout = true
 
 [build]
@@ -57,7 +58,7 @@ UBUNTU = "docker.io/library/ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe3
 [verification]
 boxes = ["any x86_64 box with no GPU passed through", "the Strix Halo box"]
 probes = [
-    "llama-server --version reports release b11552; --list-devices shows only the CPU",
+    "llama-server --version reports the release pinned in runners/llama.cpp.toml; --list-devices shows no GPU",
     "a small GGUF (e.g. qwen2.5-0.5b-instruct Q4_K_M) loads with -ngl 0 and answers a temp-0 prompt",
     "the same request on a host without AVX-512 (any GitHub runner) and on the Strix Halo box: both answer, no SIGILL",
     "the hal0 slot renders --port and /health answers on it (llama-server's own default is 9931 since #30159)",
