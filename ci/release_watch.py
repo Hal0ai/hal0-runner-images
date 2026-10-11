@@ -247,7 +247,7 @@ def pr_body(b: Bump) -> str:
     if b.tag:
         out += ["Not changed here, for a person to do in this PR:", "",
                 "- [ ] the `#:` notes above `version` in `runners/llama.cpp.toml`, which describe the old release",
-                "- [ ] `[verification]` probes that should change for this release (read the upstream diff)", "",
+                "- [ ] gate probes in `gates/<key>.toml` that should change for this release (read the upstream diff)", "",
                 "## Before merging", "",
                 "- [ ] Read the upstream diff for changes to flags, defaults, API or chat templating",
                 "- [ ] `build.yml` is green: it builds the changed images with `push=false`", ""]

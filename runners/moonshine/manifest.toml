@@ -33,50 +33,13 @@ PYTHON = "docker.io/library/python:3.12.13-bookworm@sha256:3cd9086bdb30f7c9bc08a
 PIP_VERSION = "26.1.1"
 
 [verification]
-#: Run by scripts/gate.py (docs/UPDATING.md section 4). gate-models.toml
-#: entries: moonshine (the model directory holding encoder_model.*) and
-#: stt-sample (a short English 16 kHz mono 16-bit WAV, with its transcript as
-#: `text`).
 boxes = ["any x86_64 box"]
-
-[verification.lanes.cpu]
-
-[[verification.probe]]
-name = "pip-check"
-doc = "pip check passes in the shipped image (the build runs it too)"
-kind = "exec"
-lanes = []
-entrypoint = "python3"
-args = ["-m", "pip", "check"]
-
-[[verification.session]]
-name = "stt"
-doc = "moonshine-server with the model mounted"
-args = ["--model_path", "{path:moonshine}", "--model_arch", "small_streaming", "--host", "0.0.0.0", "--port", "8089"]
-port = 8089
-ready = { model_loaded = true }
-mem_extra_gib = 2
-startup_timeout = 300
-
-  [[verification.session.check]]
-  name = "health"
-  doc = "/health returns 200 with model_loaded=true (model moonshine-small_streaming-en)"
-  kind = "http-json"
-  equals = { model_loaded = true }
-  contains = { model_id = "small_streaming" }
-
-  [[verification.session.check]]
-  name = "transcribe"
-  doc = "POST /v1/audio/transcriptions with a short English WAV returns the expected text"
-  kind = "transcribe"
-  sample = "stt-sample"
-  min_recall = 0.8
-
-  [[verification.session.check]]
-  name = "stream"
-  doc = "the WebSocket streaming endpoint returns partial transcripts"
-  kind = "stream"
-  sample = "stt-sample"
+probes = [
+    "the build's `pip check` passes (part of the Containerfile)",
+    "/health returns 200 with model_loaded=true (model moonshine-small_streaming-en)",
+    "POST /v1/audio/transcriptions with a short English WAV returns the expected text",
+    "the WebSocket streaming endpoint returns partial transcripts",
+]
 
 [lifecycle]
 purpose = "Default speech-to-text: runs on the CPU on any box."

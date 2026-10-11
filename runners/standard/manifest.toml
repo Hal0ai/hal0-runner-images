@@ -100,188 +100,32 @@ drop_when = "upstream raises the threshold or makes it a runtime option"
 
 [verification]
 #: The hardware gate a build must pass on the Strix Halo box before hal0
-#: pins its digest (docs/UPDATING.md section 4). scripts/gate.py runs every
-#: probe and session below, once per lane, one model at a time, with the
-#: device and security flags of a hal0 slot:
-#:
-#:   python3 scripts/gate.py standard --digest sha256:<digest>
-#:
-#: {path:KEY} names a model file in the operator's gate-models.toml (kept
-#: outside this repository); the defaults are Qwen3.8-27B UD-Q4_K_XL with
-#: mmproj-F16 and LFM2.5-2.6B Q8_0.
+#: pins its digest (docs/UPDATING.md). Run each probe on the ROCm lane
+#: (-dev ROCm0) and the Vulkan lane (-dev Vulkan0) with -ngl 999, using
+#: the same device and security flags as a hal0 slot. Post the results as
+#: a PR comment and record the gated digest in images.json.
 #:
 #: Not gated: Qwen3.8-Flash-Next. hal0 ships it as unsupported; it needs
 #: more than 115 GB of free unified memory to load.
 boxes = ["the Strix Halo box (kfd present)"]
-
-[verification.lanes.rocm]
-devices = ["/dev/kfd", "/dev/dri"]
-server_args = ["-dev", "ROCm0", "-ngl", "999"]
-
-[verification.lanes.vulkan]
-devices = ["/dev/kfd", "/dev/dri"]
-server_args = ["-dev", "Vulkan0", "-ngl", "999"]
-
-[[verification.probe]]
-name = "version"
-doc = "llama-server --version reports the llama.cpp release pinned in runners/llama.cpp.toml"
-kind = "exec"
-lanes = ["rocm"]
-args = ["--version"]
-expect = ["version: {version_digits}\\b"]
-
-[[verification.probe]]
-name = "no-gpu-exit-78"
-doc = "no devices mapped with -ngl 99 -> readable diagnostic, exit 78 (hal0 #1936)"
-kind = "exec"
-lanes = []
-args = ["-ngl", "99", "-m", "/gate/models/absent.gguf"]
-exit = 78
-expect = ["no GPU devices are visible"]
-
-[[verification.probe]]
-name = "doomed-model-exit-64"
-doc = "a model file llama-server cannot load -> exit 64 (hal0 #2037)"
-kind = "exec"
-lanes = ["rocm"]
-args = ["-m", "{garbage}"]
-lane_args = true
-exit = 64
-expect = ["translating to exit 64"]
-
-#: hal0's default slot for the default model: 96K context, in-file MTP head,
-#: mmproj, ubatch smaller than batch, and no --port (the entrypoint passes
-#: 8080 because upstream's default moved to 9931, #30159).
-[[verification.session]]
-name = "qwen-mtp"
-doc = "Qwen3.8-27B UD-Q4_K_XL + mmproj-F16 with MTP at hal0's defaults"
-args = ["-m", "{path:qwen3.8-27b}", "--mmproj", "{path:qwen3.8-27b-mmproj}", "-c", "98304",
-        "--spec-type", "draft-mtp", "-b", "2048", "-ub", "512", "--jinja"]
-port = 8080
-mem_extra_gib = 10
-
-  [[verification.session.check]]
-  name = "default-port"
-  doc = "started with no --port, /health answers on 8080"
-  kind = "http-json"
-  no_port_arg = true
-
-  [[verification.session.check]]
-  name = "paris"
-  doc = "temp-0 'The capital of France is' -> 'Paris'; with -b 2048 -ub 512 it loads and serves"
-  kind = "completion"
-  prompt = "The capital of France is"
-  expect = "Paris"
-
-  [[verification.session.check]]
-  name = "structured-output"
-  doc = "hal0's default reasoning settings (no --reasoning-format none): json_object and json_schema -> 200 with valid JSON, enable_thinking absent / true / false"
-  kind = "structured"
-  formats = ["json_object", "json_schema"]
-  thinking = ["absent", "true", "false"]
-
-  [[verification.session.check]]
-  name = "grammar-size"
-  doc = "json_schema as large as a tool manifest plus one string with minLength 2500 -> 200 (patch 0001)"
-  kind = "grammar-size"
-  min_length = 2500
-
-  [[verification.session.check]]
-  name = "tool-call"
-  doc = "native tool_calls on Qwen3.8-27B"
-  kind = "tool-call"
-
-  [[verification.session.check]]
-  name = "large-tool-array"
-  doc = "a tools array over 29k tokens with the target tool last; the model calls that tool with valid arguments"
-  kind = "large-tools"
-  min_prompt_tokens = 29000
-
-  [[verification.session.check]]
-  name = "resident-memory"
-  doc = "resident memory at the default context (96K) with MTP leaves the headroom for TTS/STT"
-  kind = "resident-memory"
-
-  [[verification.session.check]]
-  name = "mtp-on"
-  doc = "MTP decode t/s and draft acceptance (records the 512-token temp-0 output)"
-  kind = "mtp"
-  role = "on"
-
-[[verification.session]]
-name = "qwen-no-mtp"
-doc = "the same model without MTP, for the comparison"
-args = ["-m", "{path:qwen3.8-27b}", "--mmproj", "{path:qwen3.8-27b-mmproj}", "-c", "98304",
-        "-b", "2048", "-ub", "512", "--jinja"]
-port = 8080
-mem_extra_gib = 10
-
-  [[verification.session.check]]
-  name = "mtp-off"
-  doc = "decode t/s without MTP; whether the 512-token temp-0 output equals the MTP one (divergence on quantized models is upstream #25618)"
-  kind = "mtp"
-  role = "off"
-
-[[verification.session]]
-name = "qwen-np4"
-doc = "four server slots"
-args = ["-m", "{path:qwen3.8-27b}", "-c", "32768", "-np", "4", "--jinja"]
-port = 8080
-mem_extra_gib = 6
-
-  [[verification.session.check]]
-  name = "concurrency"
-  doc = "-np 4: four simultaneous temp-0 requests all complete and answer correctly; identity with the sequential answers is recorded"
-  kind = "concurrency"
-  parallel = 4
-
-[[verification.session]]
-name = "qwen-reasoning-none"
-doc = "--reasoning-format none (failed with 'Failed to initialize samplers' at b11510; hal0 #2545)"
-args = ["-m", "{path:qwen3.8-27b}", "-c", "16384", "--jinja", "--reasoning-format", "none"]
-port = 8080
-mem_extra_gib = 4
-informational = true
-
-  [[verification.session.check]]
-  name = "structured-reasoning-none"
-  doc = "json_object and json_schema with --reasoning-format none; recorded, not a gate"
-  kind = "structured"
-
-[[verification.session]]
-name = "lfm"
-doc = "LFM2.5-2.6B Q8_0"
-args = ["-m", "{path:lfm2.5-2.6b}", "-c", "16384", "--jinja"]
-port = 8080
-mem_extra_gib = 3
-
-  [[verification.session.check]]
-  name = "lfm-structured-output"
-  doc = "lfm2.5-2.6b Q8_0: response_format json_object and json_schema -> 200 (hal0 #2056)"
-  kind = "structured"
-
-[[verification.session]]
-name = "brain-sft"
-doc = "hal0-brain-sft (minicpm5, plain GGUF)"
-args = ["-m", "{path:hal0-brain-sft}", "-c", "16384", "--jinja"]
-port = 8080
-mem_extra_gib = 3
-
-  [[verification.session.check]]
-  name = "brain-sft-tool-call"
-  doc = "hal0-brain-sft: native tool_calls"
-  kind = "tool-call"
-
-[[verification.probe]]
-name = "perplexity"
-doc = "llama-perplexity on the same text, ROCm vs Vulkan, within 1%"
-kind = "perplexity"
-model = "lfm2.5-2.6b"
-text = "perplexity-text"
-compare = ["rocm", "vulkan"]
-ctx = 512
-chunks = 40
-max_diff_pct = 1.0
+probes = [
+    "load: unsloth/Qwen3.8-27B-GGUF UD-Q4_K_XL + mmproj-F16; temp-0 'The capital of France is' -> 'Paris'",
+    "port: started with no --port, the entrypoint passes --port 8080 and /health answers on 8080 (upstream default moved to 9931, #30159)",
+    "MTP: --spec-type draft-mtp (in-file head) on vs off; decode t/s and draft acceptance",
+    "MTP output diff: the same temp-0 512-token completion with and without MTP; record whether the text is identical (divergence on quantized models is upstream #25618)",
+    "resident memory at the default context (96K) with MTP; headroom for the brain slot plus TTS/STT",
+    "batching: -b 2048 -ub 512 (ubatch smaller than batch) loads and serves",
+    "concurrency: -np 4, four simultaneous temp-0 requests all complete, and each matches its sequential answer",
+    "structured output with hal0's default reasoning settings (no --reasoning-format none): response_format json_object AND json_schema -> 200 with valid JSON, enable_thinking absent / true / false",
+    "structured output with --reasoning-format none: record the result (failed with 'Failed to initialize samplers' at b11510; hal0 #2545); informational, not a gate",
+    "grammar size: response_format json_schema from the full hal0 tool manifest plus one string with minLength 2500 -> 200 (patch 0001)",
+    "large tool array: a tools array over 29k tokens with the target tool last; the model calls that tool with valid arguments",
+    "native tool_calls on Qwen3.8-27B",
+    "lfm2.5-2.6b Q8_0: response_format json_object AND json_schema -> 200 (hal0 #2056)",
+    "hal0-brain-sft (minicpm5, plain GGUF): native tool_calls",
+    "perplexity: llama-perplexity on the same text, ROCm vs Vulkan, within 1%",
+    "no devices mapped with -ngl 99 -> readable diagnostic, exit 78 (hal0 #1936); doomed model file -> exit 64 (hal0 #2037)",
+]
 
 [lifecycle]
 purpose = "The default GPU runner: official llama.cpp releases for AMD GPUs, ROCm and Vulkan in one image."

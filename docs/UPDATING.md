@@ -30,8 +30,8 @@ digest it resolves to (the registry's tag list is read in full to find it). It i
 only when newer than the pinned tag and any current candidate. When only `cuda` has a
 newer tag, the PR moves only that candidate. Promote moves it to the pin.
 
-The PR does not touch the `#:` notes in the pin file or the `[verification]`
-probes; its checklist lists them for a person. Read the upstream changes before
+The PR does not touch the `#:` notes in the pin file or the gate probes in
+`gates/<key>.toml`; its checklist lists them for a person. Read the upstream changes before
 merging: these images run with GPU access on people's machines, and a pin only
 protects them if someone reads what changed.
 
@@ -51,7 +51,8 @@ runner's recipe in an ordinary PR:
    `requirements.txt` for PyPI sources; `[image].version`; base images as
    `image@sha256:<digest>`. (`standard` and `cpu` take their llama.cpp release from
    `runners/llama.cpp.toml` instead.)
-3. Re-check each patch's `drop_when`, and re-read `[verification]` and `[lifecycle]`.
+3. Re-check each patch's `drop_when`, re-read `[lifecycle]`, and update the gate's
+   probes in `gates/<key>.toml` (a separate change is fine: it rebuilds nothing).
 4. `python3 scripts/runner.py build <key> --check` and
    `python3 scripts/test_repo_consistency.py` locally.
 
@@ -96,16 +97,16 @@ python3 scripts/gate.py --group llama.cpp \
 python3 scripts/gate.py flm --plan       # print the probes and podman commands; run nothing
 ```
 
-`scripts/gate.py` runs the `[verification]` section of the runner's manifest
-(docs/RECIPES.md) and nothing else; the probes are declared there, not in the
-script. For each runner it:
+`scripts/gate.py` runs `gates/<key>.toml` (docs/RECIPES.md) and nothing else;
+the probes are declared there, not in the script, and outside `runners/<key>/`
+so that changing a probe never changes an image tag. For each runner it:
 
 1. pulls `image@digest`, checks the `dev.hal0.runner.key` and
    `org.opencontainers.image.version` labels, and asks the registry that the tag
    (`--tag`, or the label) still points at that digest. A mismatch stops the gate
    before any container runs;
 2. runs the lane-less probes, then every probe and session once per lane in
-   `[verification.lanes]` (`rocm` and `vulkan` for `standard`), then the
+   the gate file's `[lanes]` (`rocm` and `vulkan` for `standard`), then the
    cross-lane probes (ROCm vs Vulkan perplexity). One container and one model at
    a time;
 3. before every model load reads `/sys/devices/system/node/node0/meminfo` (the

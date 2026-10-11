@@ -1,0 +1,48 @@
+# gates/kokoro.toml: the hardware gate for runners/kokoro (docs/UPDATING.md section 4).
+#
+# scripts/gate.py runs exactly this file against a published image@digest:
+#   python3 scripts/gate.py kokoro --digest sha256:<digest>
+# It lives outside runners/kokoro/ so that changing a probe never changes the
+# image tag or rebuilds the image. Format: docs/RECIPES.md, "gates/<key>.toml".
+
+#: Run by scripts/gate.py (docs/UPDATING.md section 4). The kokoro entry of
+#: gate-models.toml is the directory holding kokoro-*.onnx and voices*.bin.
+boxes = ["any x86_64 box"]
+
+[lanes.cpu]
+
+[[probe]]
+name = "pip-check"
+doc = "pip check passes in the shipped image (the build runs it too)"
+kind = "exec"
+lanes = []
+entrypoint = "python3"
+args = ["-m", "pip", "check"]
+
+[[session]]
+name = "tts"
+doc = "kokoro-server with the model mounted"
+args = ["--model_path", "{path:kokoro}", "--host", "0.0.0.0", "--port", "8090"]
+port = 8090
+ready = { model_loaded = true }
+mem_extra_gib = 2
+startup_timeout = 300
+
+  [[session.check]]
+  name = "health"
+  doc = "/health returns 200 with model_loaded=true"
+  kind = "http-json"
+  equals = { model_loaded = true }
+
+  [[session.check]]
+  name = "voices"
+  doc = "/v1/audio/voices lists the voices"
+  kind = "http-json"
+  path = "/v1/audio/voices"
+  nonempty = ["voices"]
+
+  [[session.check]]
+  name = "speech"
+  doc = "POST /v1/audio/speech with the default voice returns playable audio"
+  kind = "speech"
+  input = "Hello from the hal0 hardware gate. This sentence should be clearly audible."

@@ -41,15 +41,16 @@ hal0 pins `image:tag@digest`; the digest is what counts.
 
 ```
 runners/<key>/manifest.toml   every pin for one runner: base images by digest, upstream source,
-                              build arguments, patches, the hardware gate, why it exists
+                              build arguments, patches, why it exists
 runners/<key>/Containerfile   the image definition (no pin defaults; values come from the manifest)
 runners/<key>/...             patches/, the entrypoint, server code, requirements.txt
 runners/llama.cpp.toml        the llama.cpp release shared by standard, cpu and cuda
+gates/<key>.toml              the hardware gate's probes per runner (not part of the image tag)
 images.json                   the catalogue hal0 reads (docs/SCHEMA.md)
 retention-allowlist.json      old packages the GHCR cleanup must keep for installed boxes
 scripts/runner.py             builds any runner: list, tag, build, build --check
-scripts/gate.py               the hardware gate: runs a manifest's [verification] against a
-                              published digest on the Strix Halo box, writes the gate report
+scripts/gate.py               the hardware gate: runs gates/<key>.toml against a published
+                              digest on the Strix Halo box, writes the gate report
 scripts/source_watch.py       weekly report: which upstreams have a newer release
 scripts/retention.py          GHCR cleanup (dry run unless asked to delete)
 scripts/test_*.py             stdlib checks, run on every pull request

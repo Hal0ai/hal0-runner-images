@@ -2,8 +2,10 @@
 """Hardware gate for a published runner image (docs/UPDATING.md section 4).
 
 Run it on the Strix Halo box, never in CI. It pulls `image@digest`, runs the
-`[verification]` probes of `runners/<key>/manifest.toml` against it and writes
-a `hal0.gate-report.v1` document that `ci/promote.py` accepts:
+probes of `gates/<key>.toml` against it and writes a `hal0.gate-report.v1`
+document that `ci/promote.py` accepts. The probes live outside runners/<key>/
+so that changing one never changes an image tag; the manifest is read only for
+the image's identity (package, version, source ref):
 
     python3 scripts/gate.py standard --digest sha256:<64 hex> [--tag b11552-r1a2b3c]
             [--models gate-models.toml] [--models-dir DIR] [--out report.json]
@@ -16,8 +18,8 @@ stdlib only. What it does, in order, per runner:
 
   1. pulls image@digest, checks its labels (runner key, immutable tag) and that
      the registry tag still resolves to that digest;
-  2. for every lane in [verification.lanes] (rocm, vulkan, cpu, npu), runs the
-     probes and sessions of the manifest, ONE container and ONE model at a time.
+  2. for every lane in gates/<key>.toml (rocm, vulkan, cpu, npu), runs its
+     probes and sessions, ONE container and ONE model at a time.
      Containers are named gate-<key>-*, publish on 127.0.0.1 only, mount models
      read-only, and get the device and security flags of a hal0 slot;
   3. before every model load, reads host memory (/sys/devices/system/node/node0
@@ -67,6 +69,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 ROOT = Path(__file__).resolve().parent.parent
+GATES = ROOT / "gates"
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "ci"))
 import runner  # noqa: E402
@@ -107,7 +110,7 @@ class Fail(Exception):
 
 
 # ---------------------------------------------------------------------------
-# The plan: [verification] of a manifest (pure, tested)
+# The plan: gates/<key>.toml (pure, tested)
 # ---------------------------------------------------------------------------
 
 LANE_FIELDS = {"devices", "server_args", "podman_args"}
@@ -171,31 +174,37 @@ def _strs(v: Any) -> bool:
     return isinstance(v, list) and all(isinstance(x, str) for x in v)
 
 
-def validate_verification(key: str, doc: dict) -> list[str]:
-    """Problems with a manifest's [verification] (the gate's input). Empty = fine."""
+GATE_KEYS = {"boxes", "lanes", "probe", "session"}
+
+
+def validate_gate(ver: dict, backends: list[str]) -> list[str]:
+    """Problems with a gates/<key>.toml document (the gate's input). Empty = fine."""
     out: list[str] = []
-    ver = doc.get("verification")
     if not isinstance(ver, dict):
-        return ["[verification] missing"]
-    backends = set(doc.get("runner", {}).get("backends", []))
+        return ["not a TOML table"]
+    for f in sorted(set(ver) - GATE_KEYS):
+        out.append(f"unknown top-level key {f!r} (expected {sorted(GATE_KEYS)})")
+    if not _strs(ver.get("boxes")) or not ver.get("boxes"):
+        out.append("boxes must list the boxes the gate runs on")
+    backends = set(backends)
     lanes = ver.get("lanes")
     if not isinstance(lanes, dict) or not lanes:
-        out.append("[verification.lanes] must define at least one lane")
+        out.append("[lanes] must define at least one lane")
         lanes = {}
     for lane, spec in lanes.items():
         if lane not in backends:
             out.append(f"lane {lane!r} is not one of [runner].backends {sorted(backends)}")
         if not isinstance(spec, dict):
-            out.append(f"[verification.lanes.{lane}] must be a table")
+            out.append(f"[lanes.{lane}] must be a table")
             continue
         for f in set(spec) - LANE_FIELDS:
-            out.append(f"[verification.lanes.{lane}]: unknown key {f!r}")
+            out.append(f"[lanes.{lane}]: unknown key {f!r}")
         for f in LANE_FIELDS & set(spec):
             if not _strs(spec[f]):
-                out.append(f"[verification.lanes.{lane}].{f} must be a list of strings")
+                out.append(f"[lanes.{lane}].{f} must be a list of strings")
         for d in spec.get("devices", []):
             if not str(d).startswith("/dev/"):
-                out.append(f"[verification.lanes.{lane}]: device {d!r} is not under /dev")
+                out.append(f"[lanes.{lane}]: device {d!r} is not under /dev")
     names: list[str] = []
 
     def name_ok(where: str, item: dict) -> None:
@@ -222,7 +231,7 @@ def validate_verification(key: str, doc: dict) -> list[str]:
                 out.append(f"{where}: {p!r} is not a regular expression ({e})")
 
     for i, p in enumerate(ver.get("probe", [])):
-        where = f"[[verification.probe]] #{i + 1}"
+        where = f"[[probe]] #{i + 1}"
         if not isinstance(p, dict):
             out.append(f"{where} must be a table")
             continue
@@ -252,7 +261,7 @@ def validate_verification(key: str, doc: dict) -> list[str]:
                 out.append(f"{where}: compare must name two lanes of {sorted(lanes)}")
     sessions = ver.get("session", [])
     for i, s in enumerate(sessions):
-        where = f"[[verification.session]] #{i + 1}"
+        where = f"[[session]] #{i + 1}"
         if not isinstance(s, dict):
             out.append(f"{where} must be a table")
             continue
@@ -270,7 +279,7 @@ def validate_verification(key: str, doc: dict) -> list[str]:
                 out.append(f"{where}: mounts and cache entries are {{ key = ..., target = \"/abs\" }}")
         checks = s.get("check", [])
         if not checks:
-            out.append(f"{where}: no [[verification.session.check]]")
+            out.append(f"{where}: no [[session.check]]")
         for j, c in enumerate(checks):
             cw = f"{where} check #{j + 1}"
             if not isinstance(c, dict):
@@ -294,16 +303,32 @@ def validate_verification(key: str, doc: dict) -> list[str]:
             if kind == "mtp" and c.get("role") not in ("on", "off"):
                 out.append(f"{cw}: role must be 'on' or 'off'")
     if not ver.get("probe") and not sessions:
-        out.append("[verification] has no probe and no session")
+        out.append("no [[probe]] and no [[session]]")
     return out
 
 
-def load_plan(key: str) -> dict:
+def gate_file(key: str) -> Path:
+    return GATES / f"{key}.toml"
+
+
+def read_gate(key: str) -> dict:
+    path = gate_file(key)
+    if not path.is_file():
+        raise GateError(f"runner {key!r} has no gates/{key}.toml")
+    try:
+        return tomllib.loads(path.read_text())
+    except tomllib.TOMLDecodeError as e:
+        raise GateError(f"gates/{key}.toml: {e}")
+
+
+def load_plan(key: str) -> tuple[dict, dict]:
+    """(the runner's manifest, for the image's identity; its gates/<key>.toml)."""
     doc = runner.load(key)
-    problems = validate_verification(key, doc)
+    ver = read_gate(key)
+    problems = validate_gate(ver, doc["runner"]["backends"])
     if problems:
-        raise GateError("runners/{}/manifest.toml [verification]:\n  {}".format(key, "\n  ".join(problems)))
-    return doc
+        raise GateError("gates/{}.toml:\n  {}".format(key, "\n  ".join(problems)))
+    return doc, ver
 
 
 def group_keys(group: str) -> list[str]:
@@ -1211,8 +1236,7 @@ class Gate:
     def __init__(self, key: str, digest: str, tag: str | None, models: Models, host: Host,
                  headroom_gib: float = DEFAULT_HEADROOM_GIB, plan_only: bool = False) -> None:
         self.key, self.digest, self.tag = key, digest, tag
-        self.doc = load_plan(key)
-        self.ver = self.doc["verification"]
+        self.doc, self.ver = load_plan(key)
         self.image = self.doc["image"]["package"]
         self.ref = f"{self.image}@{digest}"
         self.models, self.host = models, host

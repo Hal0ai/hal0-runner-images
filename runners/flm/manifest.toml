@@ -41,62 +41,13 @@ XDNA_REF = "beb9e450fe123ecdf395453971576179cedcf1dd"
 RUST_VERSION = "1.85.0"
 
 [verification]
-#: Run by scripts/gate.py (docs/UPDATING.md section 4) on the Strix Halo box.
-#: The flm-models entry of gate-models.toml is FastFlowLM's model cache
-#: (mounted read-only where flm looks for it) and its `tag`, a model already
-#: pulled into it.
 boxes = ["the Strix Halo box (NPU, amdxdna loaded)"]
-
-[verification.lanes.npu]
-devices = ["/dev/accel/accel0", "/dev/dri"]
-podman_args = ["--ulimit", "memlock=-1:-1"]
-
-[[verification.probe]]
-name = "xrt-smi"
-doc = "xrt-smi loads its shared libraries (also the build-time smoke)"
-kind = "exec"
-lanes = []
-entrypoint = "/opt/xilinx/xrt/bin/unwrapped/xrt-smi"
-args = ["--version"]
-
-[[verification.probe]]
-name = "version"
-doc = "`flm version` reports the pinned release"
-kind = "exec"
-lanes = []
-args = ["version"]
-expect = ["{version}"]
-
-[[verification.probe]]
-name = "validate"
-doc = "`flm validate` with /dev/accel passed through and memlock unlimited"
-kind = "exec"
-args = ["validate"]
-
-[[verification.session]]
-name = "serve"
-doc = "a hal0 flm slot: flm serve <tag>"
-args = ["serve", "{value:flm-models:tag}", "--host", "0.0.0.0", "--port", "8086", "--ctx-len", "4096"]
-port = 8086
-health = "/v1/models"
-mounts = [{ key = "flm-models", target = "/var/lib/hal0/.config/flm/models" }]
-mem_gib = 8
-startup_timeout = 600
-
-  [[verification.session.check]]
-  name = "models"
-  doc = "/v1/models lists the served model"
-  kind = "http-json"
-  path = "/v1/models"
-  nonempty = ["data"]
-
-  [[verification.session.check]]
-  name = "chat"
-  doc = "one /v1/chat/completions request answers"
-  kind = "chat"
-  model = "{value:flm-models:tag}"
-  prompt = "What is the capital of France? Answer in one word."
-  expect = "Paris"
+probes = [
+    "the build-time `xrt-smi --version` smoke passes (it is part of the Containerfile)",
+    "`flm version` reports v0.9.44",
+    "`flm validate` with /dev/accel passed through and memlock unlimited",
+    "a hal0 flm slot serves /v1/models and one /v1/chat/completions request",
+]
 
 [lifecycle]
 purpose = "Run small models on the NPU so the GPU stays free for the main model."

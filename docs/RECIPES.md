@@ -11,6 +11,7 @@ flow (build, gate, promote, pin in hal0) see [UPDATING.md](UPDATING.md).
 | `runners/<key>/Containerfile` | The image definition. Its pin ARGs have **no defaults**: values come from the manifest, so a pin lives in exactly one place. |
 | `runners/<key>/patches/` | Patches applied to a git source on the host before the build (`standard` only today). |
 | `runners/<key>/requirements.txt`, `constraints.txt` | Exact `name==version` pins for every Python package, transitive ones included. |
+| `gates/<key>.toml` | The hardware gate's probes for the runner (below). Outside `runners/<key>/`, so it is not part of the image tag. |
 | `runners/llama.cpp.toml` | The one llama.cpp release (`[llama_cpp]` `repo`, `version`, `ref`, `ref_description`) shared by `standard`, `cpu` and the external `cuda` entry. |
 
 `python3 scripts/runner.py` reads the manifest, stages the build context and
@@ -27,26 +28,29 @@ on this page.
 | `[build]` | `heavy` (needs the big CI runner setup), `timeout_minutes`, `cmake_flags` (passed as `CMAKE_FLAGS`). |
 | `[build.args]` | Every Containerfile ARG, as strings. Base images are always `image@sha256:<digest>`. |
 | `[[patches]]` | `file`, `why`, `drop_when`. |
-| `[verification]` | The hardware gate a build must pass before hal0 pins it, which `scripts/gate.py` runs as written (below): `boxes`, `[verification.lanes.<backend>]`, `[[verification.probe]]` and `[[verification.session]]`. |
+| `[verification]` | Superseded by `gates/<key>.toml` (below), which `scripts/gate.py` runs; the prose list here goes at the recipe's next change. |
 | `[lifecycle]` | `purpose`, `needed_for`, `retire_when`, and `[lifecycle.track]`: where `scripts/source_watch.py` looks for new releases (`kind = "github-release"` with a tag `pattern` and optional `include_prereleases`, or `kind = "pypi"`). |
 
-## [verification]: the gate
+## gates/<key>.toml: the hardware gate
 
-`scripts/gate.py` (docs/UPDATING.md section 4) reads this section and nothing
-else; `scripts/test_repo_consistency.py` validates it with the gate's own
-checker. Every probe, session and check has a `name` (lowercase, unique in the
+Every runner built here has a `gates/<key>.toml`: the probes the hardware gate
+runs (docs/UPDATING.md section 4). `scripts/gate.py` reads that file, and the
+manifest only for the image's identity (package, version, source ref);
+`scripts/test_repo_consistency.py` requires the file and validates it with the
+gate's own checker. It lives outside `runners/<key>/` on purpose: a probe
+change does not change the image tag and rebuilds nothing. External runners
+(`cuda`) have no gate file. Every probe, session and check has a `name` (lowercase, unique in the
 runner) and a `doc` saying what it proves.
 
 ```toml
-[verification]
 boxes = ["the Strix Halo box (kfd present)"]
 
-[verification.lanes.rocm]                 # one table per gated backend (a subset of [runner].backends)
+[lanes.rocm]                 # one table per gated backend (a subset of [runner].backends)
 devices = ["/dev/kfd", "/dev/dri"]        # passed as hal0 passes them; /dev/dri expands to its nodes
 server_args = ["-dev", "ROCm0", "-ngl", "999"]   # appended to every session's args on this lane
 podman_args = []                          # e.g. ["--ulimit", "memlock=-1:-1"], ["--ipc=host"]
 
-[[verification.probe]]                    # one container run to completion
+[[probe]]                    # one container run to completion
 name = "doomed-model-exit-64"
 doc = "a model file llama-server cannot load -> exit 64 (hal0 #2037)"
 kind = "exec"                             # exec | perplexity | elsewhere
@@ -56,14 +60,14 @@ lane_args = true                          # also append the lane's server_args
 exit = 64                                 # default 0
 expect = ["translating to exit 64"]       # regexes the output must match; reject = must not
 
-[[verification.session]]                  # one server, several checks against it
+[[session]]                  # one server, several checks against it
 name = "lfm"
 doc = "LFM2.5-2.6B Q8_0"
 args = ["-m", "{path:lfm2.5-2.6b}", "-c", "16384", "--jinja"]
 port = 8080                               # the server's port in the container (published on 127.0.0.1)
 mem_extra_gib = 3                         # memory on top of the mounted files (or mem_gib = total)
 
-  [[verification.session.check]]
+  [[session.check]]
   name = "lfm-structured-output"
   doc = "response_format json_object and json_schema -> 200 (hal0 #2056)"
   kind = "structured"
@@ -73,7 +77,7 @@ Placeholders in `args`: `{path:<key>}` is a file or directory from the
 operator's `gate-models.toml`, mounted read-only (at
 `/gate/models/<key>/<file>` unless a session's `mounts` gives a `target`);
 `{value:<key>:<field>}` is another field of that entry; `{version}`,
-`{version_digits}` and `{ref7}` come from this manifest; `{garbage}` is a file
+`{version_digits}` and `{ref7}` come from the runner's manifest; `{garbage}` is a file
 that is not a model.
 
 Session keys: `entrypoint`, `health` (default `/health`), `ready` (JSON fields
@@ -93,8 +97,9 @@ decode speed and draft acceptance, `"off"` compares), `resident-memory`, `log`
 `stream` and `comfy-generate`. `scripts/gate.py` (`CHECK_KINDS`) lists each
 kind's parameters.
 
-Changing `[verification]` changes `runners/<key>/`, so the runner gets a new
-tag and is rebuilt like any other recipe change.
+The `[verification]` table in each manifest is the older prose list of the
+same gate. It is superseded by `gates/<key>.toml` and goes away the next time
+that recipe changes for another reason (editing it alone would rebuild the image).
 
 ## Tags and labels
 

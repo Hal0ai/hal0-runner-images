@@ -9,8 +9,10 @@ No network, no container runtime. Checks:
   * images.json is schema hal0.runner-images.v2 (docs/SCHEMA.md), with no
     unknown fields, and every recipe has exactly one matching entry;
   * every runners/<key>/manifest.toml passes scripts/runner.py's validation
-    and carries [verification] (a valid scripts/gate.py plan) and [lifecycle]
-    (with a release-aware track);
+    and carries [verification] and [lifecycle] (with a release-aware track);
+  * every runner has a gates/<key>.toml that scripts/gate.py accepts (the
+    hardware gate; external runners such as cuda have none), and no gate file
+    names a runner that does not exist;
   * every Containerfile takes its base images from manifest build args pinned
     by digest, declares no pin defaults of its own, and clones no branch;
   * Python dependency files pin exact versions;
@@ -152,9 +154,8 @@ def test_manifests() -> None:
         check(doc["runner"]["family"] in FAMILIES, f"runners/{key}: family not a hal0 RuntimeFamily")
         check(doc["runner"]["tier"] in TIERS, f"runners/{key}: tier invalid")
         check(set(doc["runner"]["backends"]) <= BACKENDS, f"runners/{key}: backends invalid")
-        # [verification] is scripts/gate.py's input: the same validator the gate runs.
-        for p in gate.validate_verification(key, doc):
-            failures.append(f"runners/{key}: {p}")
+        probes = doc.get("verification", {}).get("probes")
+        check(isinstance(probes, list) and len(probes) > 0, f"runners/{key}: [verification].probes must list the gate")
         life = doc.get("lifecycle", {})
         for f in ("purpose", "retire_when"):
             check(isinstance(life.get(f), str) and life[f].strip() != "", f"runners/{key}: [lifecycle].{f} missing")
@@ -181,6 +182,26 @@ def test_manifests() -> None:
                   f"runners/{key}: set -DGGML_NATIVE=OFF; ggml otherwise builds for the build machine's CPU (hal0 #2126)")
             check("-DLLAMA_BUILD_UI=OFF" in flags and "-DLLAMA_USE_PREBUILT_UI=OFF" in flags,
                   f"runners/{key}: turn the web UI off with upstream's current option names")
+
+
+def test_gates() -> None:
+    keys = runner.keys()
+    for key in keys:
+        path = ROOT / "gates" / f"{key}.toml"
+        if not path.is_file():
+            failures.append(f"runners/{key}: no gates/{key}.toml (the hardware gate scripts/gate.py runs)")
+            continue
+        try:
+            doc = tomllib.loads(path.read_text())
+        except tomllib.TOMLDecodeError as e:
+            failures.append(f"gates/{key}.toml: {e}")
+            continue
+        # The same validator the gate runs before it starts.
+        for p in gate.validate_gate(doc, runner.load(key)["runner"]["backends"]):
+            failures.append(f"gates/{key}.toml: {p}")
+    for path in sorted((ROOT / "gates").glob("*")):
+        check(path.suffix == ".toml" and path.stem in keys,
+              f"gates/{path.name}: not a gate for a runner built here (external runners such as cuda have none)")
 
 
 def containerfile_args(text: str) -> tuple[dict[str, str | None], list[str]]:
@@ -311,7 +332,7 @@ def test_no_lan_addresses() -> None:
 
 
 def main() -> int:
-    for t in (test_catalogue_shape, test_catalogue_matches_recipes, test_manifests, test_containerfiles,
+    for t in (test_catalogue_shape, test_catalogue_matches_recipes, test_manifests, test_gates, test_containerfiles,
               test_python_pins, test_llama_release, test_standard_entrypoint, test_no_retired_names,
               test_allowlist, test_no_lan_addresses):
         before = len(failures)

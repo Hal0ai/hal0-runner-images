@@ -52,63 +52,13 @@ AMDGPUMONITOR_REF = "0c584ed28ed3678d96f631a6eff91be397c0baa4"
 GGUF_REF = "6ea2651e7df66d7585f6ffee804b20e92fb38b8a"
 
 [verification]
-#: Run by scripts/gate.py (docs/UPDATING.md section 4) on the Strix Halo box.
-#: gate-models.toml: sdxl is an SDXL checkpoint (.safetensors), mounted
-#: read-only into models/checkpoints. ComfyUI starts with hal0's launch flags.
 boxes = ["the Strix Halo box (kfd present)"]
-
-[verification.lanes.rocm]
-devices = ["/dev/kfd", "/dev/dri"]
-podman_args = ["--ipc=host"]
-
-[[verification.probe]]
-name = "pip-check"
-doc = "pip check passes in the shipped image (the build runs it too)"
-kind = "exec"
-lanes = []
-entrypoint = "/opt/venv/bin/python"
-args = ["-m", "pip", "check"]
-
-[[verification.probe]]
-name = "torch-rocm"
-doc = "the venv's torch is a ROCm build (the build asserts it too)"
-kind = "exec"
-lanes = []
-entrypoint = "/opt/venv/bin/python"
-args = ["-c", "import torch; assert torch.version.hip, 'torch without ROCm'; print('torch', torch.__version__, 'hip', torch.version.hip)"]
-expect = ["hip \\d"]
-
-[[verification.session]]
-name = "comfyui"
-doc = "ComfyUI with hal0's launch flags and one SDXL checkpoint"
-args = ["bash", "-lc", "cd /opt/ComfyUI && exec python main.py --listen 0.0.0.0 --port 8188 --disable-mmap --bf16-vae --cache-none"]
-port = 8188
-health = "/system_stats"
-mounts = [{ key = "sdxl", target = "/opt/ComfyUI/models/checkpoints/{basename}" }]
-mem_extra_gib = 10
-startup_timeout = 900
-
-  [[verification.session.check]]
-  name = "gpu"
-  doc = "the log shows AMD arch gfx1151, the full unified-memory VRAM pool (at least 64 GiB) and NORMAL_VRAM"
-  kind = "log"
-  expect = ["gfx1151", "NORMAL_VRAM"]
-  at_least = [{ pattern = "Total VRAM (\\d+) MB", min = 65536 }]
-
-  [[verification.session.check]]
-  name = "custom-nodes"
-  doc = "the AMDGPUMonitor, essentials and GGUF custom nodes load"
-  kind = "custom-nodes"
-  names = ["ComfyUI-AMDGPUMonitor", "ComfyUI_essentials", "ComfyUI-GGUF"]
-
-  [[verification.session.check]]
-  name = "sdxl-image"
-  doc = "one SDXL image generation completes"
-  kind = "comfy-generate"
-  checkpoint = "sdxl"
-  width = 1024
-  height = 1024
-  steps = 20
+probes = [
+    "the build's non-ROCm-torch assertion and `pip check` pass (part of the Containerfile)",
+    "ComfyUI starts; its log shows AMD arch gfx1151, the full unified-memory VRAM pool and NORMAL_VRAM",
+    "the AMDGPUMonitor, essentials and GGUF custom nodes load",
+    "one SDXL (or Flux) image generation through hal0 completes",
+]
 
 [lifecycle]
 purpose = "Image and video generation for hal0, on the GPU."

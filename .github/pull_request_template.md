@@ -10,7 +10,7 @@
 - [ ] Read the upstream changes between the old and new pin (compare link: )
 - [ ] `build.yml` is green: `python3 scripts/runner.py build <key> --check` and the `push=false` image build; patches upstream now carries are dropped
 - [ ] llama.cpp bumps: `standard` and `cpu` move together; `cuda` in images.json follows when ggml-org has published the image
-- [ ] `[verification]` and `[lifecycle]` re-read and updated for this change
+- [ ] `[lifecycle]` re-read, and the gate's probes in `gates/<key>.toml` updated for this change
 - [ ] After merge: CI pushed `<version>-r<sha7>`; candidate digest (merge commit comment):
 - [ ] Hardware gate on the Strix Halo box against that digest: result:
 - [ ] Promote runner image dispatched (a llama.cpp bump promotes standard, cpu and cuda in one run); pins land in images.json and in hal0 through its two PRs, not this one

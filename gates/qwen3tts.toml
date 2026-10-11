@@ -1,0 +1,65 @@
+# gates/qwen3tts.toml: the hardware gate for runners/qwen3tts (docs/UPDATING.md section 4).
+#
+# scripts/gate.py runs exactly this file against a published image@digest:
+#   python3 scripts/gate.py qwen3tts --digest sha256:<digest>
+# It lives outside runners/qwen3tts/ so that changing a probe never changes the
+# image tag or rebuilds the image. Format: docs/RECIPES.md, "gates/<key>.toml".
+
+#: Run by scripts/gate.py (docs/UPDATING.md section 4) on the Strix Halo box.
+#: gate-models.toml: qwen3tts is the Qwen3-TTS-12Hz-1.7B-CustomVoice
+#: directory. The server downloads its codec and tokenizer into /cache; give
+#: a qwen3tts-cache directory to reuse one between runs (it is written to),
+#: otherwise each run starts from an empty one.
+boxes = ["the Strix Halo box (kfd present)"]
+
+[lanes.rocm]
+devices = ["/dev/kfd", "/dev/dri"]
+
+[[probe]]
+name = "pip-check"
+doc = "pip check passes in the shipped image (the build runs it too)"
+kind = "exec"
+lanes = []
+entrypoint = "python3"
+args = ["-m", "pip", "check"]
+
+[[probe]]
+name = "torch-rocm"
+doc = "the image's torch is a ROCm build (the build asserts it too)"
+kind = "exec"
+lanes = []
+entrypoint = "python3"
+args = ["-c", "import torch; assert torch.version.hip, 'torch without ROCm'; print('torch', torch.__version__, 'hip', torch.version.hip)"]
+expect = ["hip \\d"]
+
+[[session]]
+name = "tts"
+doc = "qwen3tts-server with Qwen3-TTS-12Hz-1.7B-CustomVoice mounted"
+args = ["--model_path", "{path:qwen3tts}", "--host", "0.0.0.0", "--port", "8087"]
+port = 8087
+ready = { model_loaded = true }
+cache = [{ key = "qwen3tts-cache", target = "/cache" }]
+mem_extra_gib = 6
+startup_timeout = 1800
+
+  [[session.check]]
+  name = "loads-on-gpu"
+  doc = "the server loads the model on the GPU and its warm-up synthesis succeeds"
+  kind = "log"
+  expect = ["device=cuda:0", "warmup ok"]
+
+  [[session.check]]
+  name = "speech-english"
+  doc = "POST /v1/audio/speech in English returns playable audio"
+  kind = "speech"
+  input = "Hello from the hal0 hardware gate. This sentence should be clearly audible."
+  voice = "Ryan"
+  language = "English"
+
+  [[session.check]]
+  name = "speech-chinese"
+  doc = "POST /v1/audio/speech in a second language returns playable audio"
+  kind = "speech"
+  input = "你好，这是 hal0 硬件门禁的语音测试。"
+  voice = "Vivian"
+  language = "Chinese"

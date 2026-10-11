@@ -32,47 +32,12 @@ PYTHON = "docker.io/library/python:3.12.13-bookworm@sha256:3cd9086bdb30f7c9bc08a
 PIP_VERSION = "26.1.1"
 
 [verification]
-#: Run by scripts/gate.py (docs/UPDATING.md section 4). The kokoro entry of
-#: gate-models.toml is the directory holding kokoro-*.onnx and voices*.bin.
 boxes = ["any x86_64 box"]
-
-[verification.lanes.cpu]
-
-[[verification.probe]]
-name = "pip-check"
-doc = "pip check passes in the shipped image (the build runs it too)"
-kind = "exec"
-lanes = []
-entrypoint = "python3"
-args = ["-m", "pip", "check"]
-
-[[verification.session]]
-name = "tts"
-doc = "kokoro-server with the model mounted"
-args = ["--model_path", "{path:kokoro}", "--host", "0.0.0.0", "--port", "8090"]
-port = 8090
-ready = { model_loaded = true }
-mem_extra_gib = 2
-startup_timeout = 300
-
-  [[verification.session.check]]
-  name = "health"
-  doc = "/health returns 200 with model_loaded=true"
-  kind = "http-json"
-  equals = { model_loaded = true }
-
-  [[verification.session.check]]
-  name = "voices"
-  doc = "/v1/audio/voices lists the voices"
-  kind = "http-json"
-  path = "/v1/audio/voices"
-  nonempty = ["voices"]
-
-  [[verification.session.check]]
-  name = "speech"
-  doc = "POST /v1/audio/speech with the default voice returns playable audio"
-  kind = "speech"
-  input = "Hello from the hal0 hardware gate. This sentence should be clearly audible."
+probes = [
+    "the build's `pip check` passes (part of the Containerfile)",
+    "with the Kokoro model mounted, /health returns 200 with model_loaded=true and lists the voices",
+    "POST /v1/audio/speech with the default voice returns playable audio",
+]
 
 [lifecycle]
 purpose = "Default text-to-speech: light enough for the CPU on any box."

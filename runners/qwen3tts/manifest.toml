@@ -34,64 +34,12 @@ timeout_minutes = 90
 ROCM_PYTORCH = "docker.io/rocm/pytorch:rocm7.2.4_ubuntu24.04_py3.12_pytorch_release_2.10.0@sha256:4449f856653602317e4101a76fce599c7fcd58ccec2e539951fce5f73083179e"
 
 [verification]
-#: Run by scripts/gate.py (docs/UPDATING.md section 4) on the Strix Halo box.
-#: gate-models.toml: qwen3tts is the Qwen3-TTS-12Hz-1.7B-CustomVoice
-#: directory. The server downloads its codec and tokenizer into /cache; give
-#: a qwen3tts-cache directory to reuse one between runs (it is written to),
-#: otherwise each run starts from an empty one.
 boxes = ["the Strix Halo box (kfd present)"]
-
-[verification.lanes.rocm]
-devices = ["/dev/kfd", "/dev/dri"]
-
-[[verification.probe]]
-name = "pip-check"
-doc = "pip check passes in the shipped image (the build runs it too)"
-kind = "exec"
-lanes = []
-entrypoint = "python3"
-args = ["-m", "pip", "check"]
-
-[[verification.probe]]
-name = "torch-rocm"
-doc = "the image's torch is a ROCm build (the build asserts it too)"
-kind = "exec"
-lanes = []
-entrypoint = "python3"
-args = ["-c", "import torch; assert torch.version.hip, 'torch without ROCm'; print('torch', torch.__version__, 'hip', torch.version.hip)"]
-expect = ["hip \\d"]
-
-[[verification.session]]
-name = "tts"
-doc = "qwen3tts-server with Qwen3-TTS-12Hz-1.7B-CustomVoice mounted"
-args = ["--model_path", "{path:qwen3tts}", "--host", "0.0.0.0", "--port", "8087"]
-port = 8087
-ready = { model_loaded = true }
-cache = [{ key = "qwen3tts-cache", target = "/cache" }]
-mem_extra_gib = 6
-startup_timeout = 1800
-
-  [[verification.session.check]]
-  name = "loads-on-gpu"
-  doc = "the server loads the model on the GPU and its warm-up synthesis succeeds"
-  kind = "log"
-  expect = ["device=cuda:0", "warmup ok"]
-
-  [[verification.session.check]]
-  name = "speech-english"
-  doc = "POST /v1/audio/speech in English returns playable audio"
-  kind = "speech"
-  input = "Hello from the hal0 hardware gate. This sentence should be clearly audible."
-  voice = "Ryan"
-  language = "English"
-
-  [[verification.session.check]]
-  name = "speech-chinese"
-  doc = "POST /v1/audio/speech in a second language returns playable audio"
-  kind = "speech"
-  input = "你好，这是 hal0 硬件门禁的语音测试。"
-  voice = "Vivian"
-  language = "Chinese"
+probes = [
+    "the build's `pip check` and ROCm torch assertion pass (part of the Containerfile)",
+    "with Qwen3-TTS-12Hz-1.7B-CustomVoice mounted, the server loads on the GPU",
+    "POST /v1/audio/speech in two languages returns playable audio",
+]
 
 [lifecycle]
 purpose = "Optional higher-quality multilingual voice on the GPU."

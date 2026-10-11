@@ -60,28 +60,31 @@ def wav_bytes(seconds=1.0, rate=16000, amp=0.5, channels=1):
 
 
 class ManifestTests(unittest.TestCase):
-    def test_every_manifest_is_a_valid_gate_plan(self):
+    def test_every_runner_has_a_valid_gate(self):
         for key in runner.keys():
-            self.assertEqual(gate.validate_verification(key, runner.load(key)), [], key)
+            doc, ver = gate.load_plan(key)
+            self.assertEqual(gate.validate_gate(ver, doc["runner"]["backends"]), [], key)
+            self.assertNotIn("probe", doc.get("verification", {}))  # probes live in gates/, not in the recipe
 
     def test_validation_catches_mistakes(self):
-        doc = runner.load("cpu")
-        ver = doc["verification"]
+        doc, ver = gate.load_plan("cpu")
+        ver["colour"] = 1
         ver["lanes"]["rocm"] = {"devices": ["kfd"], "colour": []}
         ver["probe"].append({"name": "version", "doc": "dup", "kind": "exec"})
         ver["probe"].append({"name": "x", "doc": "d", "kind": "nope"})
         ver["session"][0]["check"].append({"name": "y", "doc": "d", "kind": "completion"})
         ver["session"][0]["check"].append({"name": "z", "doc": "d", "kind": "mtp", "role": "sideways"})
-        problems = "\n".join(gate.validate_verification("cpu", doc))
-        for want in ("lane 'rocm' is not one of", "unknown key 'colour'", "not under /dev", "used twice",
+        problems = "\n".join(gate.validate_gate(ver, doc["runner"]["backends"]))
+        for want in ("unknown top-level key 'colour'", "lane 'rocm' is not one of", "unknown key 'colour'",
+                     "not under /dev", "used twice",
                      "kind 'nope'", "completion needs ['expect', 'prompt']", "role must be"):
             self.assertIn(want, problems)
 
     def test_lanes_are_backends_and_probe_kinds_cover_every_check(self):
         self.assertEqual(set(gate.CHECKS), set(gate.CHECK_KINDS))
         for key in runner.keys():
-            doc = runner.load(key)
-            self.assertTrue(set(doc["verification"]["lanes"]) <= set(doc["runner"]["backends"]), key)
+            doc, ver = gate.load_plan(key)
+            self.assertTrue(set(ver["lanes"]) <= set(doc["runner"]["backends"]), key)
 
     def test_group_is_every_runner_of_the_shared_pin(self):
         self.assertEqual(gate.group_keys("llama.cpp"), ["cpu", "standard"])
