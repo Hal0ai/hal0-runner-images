@@ -12,8 +12,9 @@ stops holding, adjust it here and in docs/UPDATING.md):
       build <key> --check       static checks, no container runtime
       build <key> --tag <ref>   build (never pushes); sets every OCI label, and
                                 org.opencontainers.image.version must equal the tag
-  runners/llama.cpp.toml        the ONE llama.cpp release pin shared by standard,
-                                cpu (and the external cuda entry); see release_watch.py
+  runners/{standard,cpu}/manifest.toml
+                                pin the same llama.cpp release: [image].version,
+                                [source].release, [source].ref (see release_watch.py)
   images.json                   hal0.runner-images.v2, runners[] keyed by `id`
 """
 

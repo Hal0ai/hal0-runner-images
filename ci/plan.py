@@ -5,9 +5,7 @@
     python3 ci/plan.py --select standard,cpu         # workflow_dispatch
     python3 ci/plan.py --select all
 
-A runner is selected when a changed path is under runners/<key>/. A changed
-file directly under runners/ (runners/llama.cpp.toml) selects the runners whose
-manifest.toml or Containerfile mention its file name. A base that is empty, all
+A runner is selected when a changed path is under runners/<key>/. A base that is empty, all
 zeros or unknown to git selects every runner: fail wide, never build nothing by
 accident. The matrix itself (image, tag, heavy, timeout) comes from
 `scripts/runner.py list`, so the recipes side stays the one authority.
@@ -45,26 +43,14 @@ def changed_files(base: str, head: str, root: Path = lib.ROOT) -> list[str] | No
     return [p for p in proc.stdout.splitlines() if p]
 
 
-def mentions(key: str, name: str, root: Path = lib.ROOT) -> bool:
-    for fname in ("manifest.toml", "Containerfile"):
-        f = root / "runners" / key / fname
-        if f.is_file() and name in f.read_text(errors="ignore"):
-            return True
-    return False
-
-
-def select_changed(keys: list[str], files: list[str] | None, root: Path = lib.ROOT) -> list[str]:
+def select_changed(keys: list[str], files: list[str] | None) -> list[str]:
     if files is None:
         return list(keys)
     hit: set[str] = set()
     for f in files:
         parts = f.split("/")
-        if parts[0] != "runners":
-            continue
-        if len(parts) >= 3 and parts[1] in keys:
+        if len(parts) >= 3 and parts[0] == "runners" and parts[1] in keys:
             hit.add(parts[1])
-        elif len(parts) == 2 and parts[1].endswith(".toml"):
-            hit.update(k for k in keys if mentions(k, parts[1], root))
     return sorted(hit)
 
 

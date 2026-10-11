@@ -2,10 +2,9 @@ name: Release watch
 
 # Weekly: look for newer upstream releases (docs/UPDATING.md, step 1).
 #
-#   llama.cpp      standard, cpu (and the external cuda entry) share one release
-#                  pin, runners/llama.cpp.toml. If ggml-org has a newer b<N>
-#                  release this opens ONE bump PR editing that file and every
-#                  Containerfile ARG / manifest that mirrors it.
+#   llama.cpp      standard and cpu pin the same release, each in its own
+#                  manifest.toml. If ggml-org has a newer b<N> release this
+#                  opens ONE bump PR moving both together.
 #   everything else report only: scripts/source_watch.py writes a report and one
 #                  tracking issue lists newer upstream versions.
 #
@@ -62,7 +61,7 @@ jobs:
           python3 ci/release_watch.py "${apply[@]}" --json-file "$RUNNER_TEMP/result.json"
           python3 scripts/source_watch.py | tee "$RUNNER_TEMP/report.md"
           if [[ -n "$(jq -r '.bump.tag // empty' "$RUNNER_TEMP/result.json")" ]]; then
-            echo "A llama.cpp bump to $(jq -r '.bump.tag' "$RUNNER_TEMP/result.json") is being prepared (shared pin, runners/llama.cpp.toml)." | cat - "$RUNNER_TEMP/report.md" > "$RUNNER_TEMP/report2.md"
+            echo "A llama.cpp bump to $(jq -r '.bump.tag' "$RUNNER_TEMP/result.json") is being prepared (standard and cpu)." | cat - "$RUNNER_TEMP/report.md" > "$RUNNER_TEMP/report2.md"
             mv "$RUNNER_TEMP/report2.md" "$RUNNER_TEMP/report.md"
           fi
           cat "$RUNNER_TEMP/report.md" >> "$GITHUB_STEP_SUMMARY"
@@ -121,7 +120,11 @@ jobs:
           print()
           print(f"Upstream changes: {b['compare_url']}")
           print()
-          print("standard, cpu and cuda share this pin, so they move together.")
+          print("`standard` and `cpu` move together. Not changed here, for a person to do in this PR:")
+          print()
+          print("- [ ] the comments in `runners/standard/manifest.toml` that describe the old release")
+          print("- [ ] `[verification]` probes that should change for this release (read the upstream diff)")
+          print("- [ ] the `cuda` row of `images.json`: `server-cuda-b<N>`, once ggml-org has published that image, never ahead of the pin")
           print()
           print("## Before merging")
           print()

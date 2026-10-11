@@ -16,24 +16,39 @@ release-watch  ->  bump PR  ->  merge  ->  candidate  ->  gate  ->  promote  -> 
 
 ## 1. Find a newer upstream: `release-watch.yml`
 
-Mondays 06:17 UTC, or dispatch. `standard`, `cpu` and the external `cuda` entry
-share **one** llama.cpp release pin, `runners/llama.cpp.toml`. The watch compares
-ggml-org's newest `b<N>` release with it and, if newer, opens **one** PR that
-edits that file and every place that mirrors it (Containerfile `ARG` defaults,
-`[source]` tables in runner manifests). An older open bump PR is closed as
-superseded.
+Mondays 06:17 UTC, or dispatch. `standard` and `cpu` pin the same llama.cpp
+release, each in its own `manifest.toml`. The watch compares ggml-org's newest
+`b<N>` release with it and, if newer, opens **one** PR that moves both:
+`[image].version`, `[source].release` and `[source].ref` (the tag's commit), and
+the `release <old>` sentence in a `[verification]` probe. An older open bump PR
+is closed as superseded.
+
+The PR does not touch comments, patches, other probes or the `cuda` row of
+`images.json`; its checklist lists them for a person. Read the upstream changes
+before merging: these images run with GPU access on people's machines, and a pin
+only protects them if someone reads what changed.
 
 (ggml-org marks every `b<N>` tag a prerelease, so GitHub's "latest release" is
 an unrelated old one. The watch lists releases and takes the highest `b<N>`.)
 
 Every other runner is report-only: `scripts/source_watch.py` writes the report
-and the issue **Runner upstream watch** lists newer upstream versions. To take
-one, edit that runner's recipe in an ordinary PR.
+and the issue **Runner upstream watch** lists newer upstream versions
+(`[lifecycle.track]` in each manifest says where to look). "Newer available" is
+information, not a to-do; an alert (pinned commit gone upstream, no release
+matches, upstream API silent) needs attention. To take a new version, edit that
+runner's recipe in an ordinary PR:
+
+1. Read the upstream changes between the old pin and the new one.
+2. Edit `manifest.toml`: `[source].ref` (full SHA) and `[source].release`, or
+   `[source].version` plus the matching line in `requirements.txt` for PyPI
+   sources; `[image].version`; base images as `image@sha256:<digest>`.
+3. Re-check each patch's `drop_when`, and re-read `[verification]` and `[lifecycle]`.
+4. `python3 scripts/runner.py build <key> --check` and
+   `python3 scripts/test_repo_consistency.py` locally.
 
 ## 2. Check the bump: `build.yml` on the PR
 
-Builds only the runners whose `runners/<key>/**` files changed (a change to
-`runners/llama.cpp.toml` selects the runners that name it). For each:
+Builds only the runners whose `runners/<key>/**` files changed. For each:
 `python3 scripts/runner.py build <key> --check`, then a full image build with
 `push=false`. A broken bump is red before anyone reads the diff. Require the
 **result** job in branch protection; it is the one check that always reports.
@@ -167,11 +182,29 @@ Defined in the docstring of `ci/lib.py`. If the layout changes, change it there.
   `ghcr.io/hal0ai/hal0-runner-<key>`.
 - `scripts/runner.py` is the only build entrypoint: `list --only <keys>` (matrix
   JSON: `key`, `image`, `tag`, `heavy`, `timeout_minutes`), `build <key> --check`
-  and `build <key> --tag <ref>` (never pushes).
+  and `build <key> --tag <ref>` (never pushes). `list` needs full git history.
 - The image's `org.opencontainers.image.version` label equals its immutable tag.
   Promote reads the tag from it.
-- `runners/llama.cpp.toml` holds the shared pin (`[llama_cpp]` `version`, `ref`);
-  the constants are at the top of `ci/release_watch.py`.
+- `standard` and `cpu` hold the llama.cpp release in `[image].version`,
+  `[source].release` and `[source].ref`; the keys are listed at the top of
+  `ci/release_watch.py`.
 - `images.json` is `hal0.runner-images.v2`: a `runners` array keyed by `id`, with
   `image`, `tag` and `digest` (null until gated). Promote also clears `candidate`
   and sets `gate_report` and `lanes_gated`, on entries that have those fields.
+
+## Adding a runner
+
+Create `runners/<key>/` with a `manifest.toml` (copy the closest existing one;
+`scripts/runner.py` and `scripts/test_repo_consistency.py` say what is required)
+and a `Containerfile`, add its entry to `images.json` with `tag` and `digest`
+`null`, and add the runner to hal0's registry in the hal0 PR that first pins it.
+Dispatch **Build runner images** once for the new key, make the new GHCR package
+public, then gate and promote it.
+
+## Retiring a runner
+
+Delete `runners/<key>/` and its `images.json` entry in one PR, and remove the
+runner from hal0 in the matching hal0 release. Boxes that have not updated still
+pull the old image, so add its `image:tag` and `image@digest` to
+`retention-allowlist.json` and leave the package in GHCR until no supported hal0
+release uses it. Deleting a package is an operator step.

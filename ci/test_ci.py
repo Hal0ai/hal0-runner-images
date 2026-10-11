@@ -27,40 +27,40 @@ OLD_SHA = "c35b66744f13cb0dcc476af063e112122eee9355"
 NEW_SHA = "a" * 40
 DIGEST = "sha256:" + "b" * 64
 
-PIN = '''# shared llama.cpp pin
-[llama_cpp]
-repo = "https://github.com/ggml-org/llama.cpp"
-version = "{version}"   # release tag
-ref = "{ref}"
-ref_description = "old words"
+MANIFEST = '''# runners/{key}
+[runner]
+key = "{key}"
 
-[other]
-ref = "must-not-change"
-'''
-MANIFEST = '''# recipe; pin lives in runners/llama.cpp.toml
-[source]
-repo = "https://github.com/ggml-org/llama.cpp"
+[image]
+#: Must equal runners/standard [image].version
 version = "{version}"
-ref = "{ref}"
-'''
-CONTAINERFILE = '''FROM scratch
-ARG LLAMA_VERSION={version}
-ARG LLAMA_REF="{ref}"
-ARG KEEP=other
-RUN echo {ref}
+
+[source]
+repo = "https://github.com/ggml-org/llama.cpp.git"
+#: Release {version}: notes that describe the old release stay as written.
+ref = "{ref}"   # pinned commit
+release = "{version}"
+checkout = true
+
+[verification]
+#: comment mentioning release {version} stays
+probes = [
+    "llama-server --version reports release {version}; --list-devices shows only the CPU",
+    "structured output failed with 'Failed to initialize samplers' at {version}; informational",
+]
+
+[lifecycle]
+purpose = "release {version} is not touched here"
 '''
 
 
-def make_tree(root: Path, runners: dict[str, dict], pin: dict | None = None) -> None:
+def make_tree(root: Path, runners: dict[str, dict]) -> None:
     (root / "runners").mkdir(parents=True, exist_ok=True)
-    if pin is not None:
-        (root / "runners" / "llama.cpp.toml").write_text(PIN.format(**pin))
     for key, spec in runners.items():
         d = root / "runners" / key
         d.mkdir(parents=True)
-        v, r = spec.get("version", "b11510"), spec.get("ref", OLD_SHA)
-        (d / "manifest.toml").write_text(spec.get("manifest") or MANIFEST.format(version=v, ref=r))
-        (d / "Containerfile").write_text(spec.get("containerfile") or CONTAINERFILE.format(version=v, ref=r))
+        (d / "manifest.toml").write_text(spec.get("manifest") or MANIFEST.format(
+            key=key, version=spec.get("version", "b11510"), ref=spec.get("ref", OLD_SHA)))
 
 
 class LibTests(unittest.TestCase):
@@ -83,28 +83,21 @@ class PlanTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
-        make_tree(self.root, {"standard": {}, "cpu": {}, "kokoro": {"manifest": "[source]\nversion='1'\n"}},
-                  pin={"version": "b11510", "ref": OLD_SHA})
-        # standard and cpu name the shared pin file; kokoro does not.
-        for k in ("standard", "cpu"):
-            (self.root / "runners" / k / "manifest.toml").write_text("# pin: llama.cpp.toml\n")
+        make_tree(self.root, {"standard": {}, "cpu": {}, "kokoro": {}})
 
     def tearDown(self):
         self.tmp.cleanup()
 
     def test_path_filter(self):
         keys = lib.runner_keys(self.root)
-        self.assertEqual(plan.select_changed(keys, ["runners/cpu/manifest.toml", "README.md"], self.root), ["cpu"])
-        self.assertEqual(plan.select_changed(keys, ["docs/UPDATING.md", "runners/README.md"], self.root), [])
-        self.assertEqual(plan.select_changed(keys, ["runners/gone/Containerfile"], self.root), [])
-
-    def test_shared_pin_file_selects_the_runners_that_name_it(self):
-        keys = lib.runner_keys(self.root)
-        self.assertEqual(plan.select_changed(keys, ["runners/llama.cpp.toml"], self.root), ["cpu", "standard"])
+        self.assertEqual(plan.select_changed(keys, ["runners/cpu/manifest.toml", "README.md"]), ["cpu"])
+        self.assertEqual(plan.select_changed(keys, ["docs/UPDATING.md", "runners/README.md"]), [])
+        self.assertEqual(plan.select_changed(keys, ["runners/gone/Containerfile"]), [])
+        self.assertEqual(plan.select_changed(keys, ["runners/kokoro/x.py", "runners/cpu/a", "runners/cpu/b"]), ["cpu", "kokoro"])
 
     def test_unknown_diff_builds_everything(self):
         keys = lib.runner_keys(self.root)
-        self.assertEqual(plan.select_changed(keys, None, self.root), keys)
+        self.assertEqual(plan.select_changed(keys, None), keys)
         self.assertIsNone(plan.changed_files("0" * 40, "HEAD", self.root))
 
     def test_explicit_select(self):
@@ -154,63 +147,56 @@ class ReleaseWatchTests(unittest.TestCase):
     def test_takes_highest_b_tag_including_prereleases_not_drafts(self):
         self.assertEqual(rw.latest_release(self._api())["tag_name"], "b11552")
 
-    def test_rewrite_table_touches_only_that_table(self):
-        text = PIN.format(version="b11510", ref=OLD_SHA)
-        new, n = rw.rewrite_table(text, "llama_cpp", {"version": "b11552", "ref": NEW_SHA, "ref_description": "d"})
-        self.assertEqual(n, 3)
+    def test_rewrite_manifest_changes_only_the_pin_and_the_release_probe(self):
+        text = MANIFEST.format(key="cpu", version="b11510", ref=OLD_SHA)
+        new, n = rw.rewrite_manifest(text, "b11552", NEW_SHA, "b11510")
+        self.assertEqual(n, 4)  # version, ref, release, one probe
         doc = tomllib.loads(new)
-        self.assertEqual((doc["llama_cpp"]["version"], doc["llama_cpp"]["ref"]), ("b11552", NEW_SHA))
-        self.assertEqual(doc["other"]["ref"], "must-not-change")
-        self.assertIn("# release tag", new)
+        self.assertEqual((doc["image"]["version"], doc["source"]["release"], doc["source"]["ref"]), ("b11552", "b11552", NEW_SHA))
+        self.assertEqual(doc["verification"]["probes"][0], "llama-server --version reports release b11552; --list-devices shows only the CPU")
+        # history is not rewritten: another probe, comments and unrelated tables keep the old release
+        self.assertIn("at b11510; informational", doc["verification"]["probes"][1])
+        self.assertIn("#: Release b11510: notes", new)
+        self.assertIn("#: comment mentioning release b11510 stays", new)
+        self.assertIn('purpose = "release b11510 is not touched here"', new)
+        self.assertIn("# pinned commit", new)  # trailing comment kept
 
-    def test_rewrite_containerfile_args_only_matching_args(self):
-        cf = CONTAINERFILE.format(version="b11510", ref=OLD_SHA)
-        new, n = rw.rewrite_containerfile_args(cf, {OLD_SHA: NEW_SHA, "b11510": "b11552"})
-        self.assertEqual(n, 2)
-        self.assertIn("ARG LLAMA_VERSION=b11552", new)
-        self.assertIn(f'ARG LLAMA_REF="{NEW_SHA}"', new)
-        self.assertIn("ARG KEEP=other", new)
-        self.assertIn(f"RUN echo {OLD_SHA}", new)  # not an ARG line: untouched
-
-    def test_bump_moves_pin_and_every_mirror_together(self):
+    def test_bump_moves_both_runners_and_nothing_else(self):
         with tempfile.TemporaryDirectory() as t:
             root = Path(t)
-            make_tree(root, {
-                "standard": {},
-                "cpu": {"version": "b11510", "ref": "b11510"},  # tag-style mirror
-                "kokoro": {"manifest": MANIFEST.replace("llama.cpp", "x").format(version="1.0", ref="v1.0"),
-                           "containerfile": "FROM scratch\nARG V=1.0\n"},
-            }, pin={"version": "b11510", "ref": OLD_SHA})
+            make_tree(root, {"standard": {}, "cpu": {}, "kokoro": {"version": "1.0", "ref": "v1.0"}})
+            kokoro_before = (root / "runners/kokoro/manifest.toml").read_text()
             bump = rw.run(root, self._api(), apply=True)
 
             self.assertEqual((bump.previous, bump.tag, bump.commit), ("b11510", "b11552", NEW_SHA))
-            pin = tomllib.loads((root / "runners/llama.cpp.toml").read_text())["llama_cpp"]
-            self.assertEqual((pin["version"], pin["ref"]), ("b11552", NEW_SHA))
-            for key, ref in (("standard", NEW_SHA), ("cpu", NEW_SHA)):
-                src = tomllib.loads((root / "runners" / key / "manifest.toml").read_text())["source"]
-                self.assertEqual(src["version"], "b11552")
-                self.assertIn(f'ARG LLAMA_VERSION=b11552', (root / "runners" / key / "Containerfile").read_text())
-            # unrelated runner untouched
-            self.assertIn('version = "1.0"', (root / "runners/kokoro/manifest.toml").read_text())
-            self.assertNotIn("runners/kokoro/manifest.toml", bump.files)
-            self.assertIn("runners/llama.cpp.toml", bump.files)
+            self.assertEqual(sorted(bump.files), ["runners/cpu/manifest.toml", "runners/standard/manifest.toml"])
+            for key in ("standard", "cpu"):
+                doc = tomllib.loads((root / "runners" / key / "manifest.toml").read_text())
+                self.assertEqual((doc["image"]["version"], doc["source"]["release"], doc["source"]["ref"]),
+                                 ("b11552", "b11552", NEW_SHA))
+            self.assertEqual((root / "runners/kokoro/manifest.toml").read_text(), kokoro_before)
 
     def test_current_pin_means_no_bump_and_dry_run_writes_nothing(self):
         with tempfile.TemporaryDirectory() as t:
             root = Path(t)
-            make_tree(root, {}, pin={"version": "b11552", "ref": NEW_SHA})
+            make_tree(root, {"standard": {"version": "b11552", "ref": NEW_SHA}})
             self.assertIsNone(rw.run(root, self._api(), apply=True))
         with tempfile.TemporaryDirectory() as t:
             root = Path(t)
-            make_tree(root, {}, pin={"version": "b11510", "ref": OLD_SHA})
-            before = (root / "runners/llama.cpp.toml").read_text()
+            make_tree(root, {"standard": {}, "cpu": {}})
+            before = (root / "runners/standard/manifest.toml").read_text()
             self.assertEqual(rw.run(root, self._api(), apply=False).tag, "b11552")
-            self.assertEqual((root / "runners/llama.cpp.toml").read_text(), before)
+            self.assertEqual((root / "runners/standard/manifest.toml").read_text(), before)
 
-    def test_missing_pin_file_fails_loudly(self):
+    def test_missing_or_unreadable_pin_fails_loudly(self):
         with tempfile.TemporaryDirectory() as t:
             with self.assertRaises(SystemExit):
                 rw.run(Path(t), self._api(), apply=True)
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            make_tree(root, {"standard": {"manifest": "[source]\nrelease = 'b1'\n"}})
+            with self.assertRaises(SystemExit):
+                rw.run(root, self._api(), apply=True)
 
 
 class PromoteTests(unittest.TestCase):
