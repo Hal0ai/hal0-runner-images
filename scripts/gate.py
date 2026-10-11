@@ -41,6 +41,7 @@ import base64
 import concurrent.futures
 import dataclasses
 import datetime as dt
+import fcntl
 import fnmatch
 import glob
 import grp
@@ -1136,6 +1137,25 @@ class Host:
     def read_bytes(self, path: str) -> bytes:
         return Path(path).read_bytes()
 
+    def pid_alive(self, pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except (PermissionError, OverflowError):
+            return True
+        return True
+
+    def lock(self) -> None:
+        """One gate at a time on this host: two would load two models at once."""
+        path = Path(os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()) / "hal0-gate.lock"
+        self._lock = open(path, "a")
+        try:
+            fcntl.flock(self._lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            self._lock.close()
+            raise GateError("another scripts/gate.py run holds the host lock; one gate at a time")
+
     def cleanup(self) -> None:
         for name in sorted(self.containers):
             self.podman([self.podman_bin, "rm", "-f", "-t", "5", name], timeout=120)
@@ -1143,6 +1163,9 @@ class Host:
         if self._tmp:
             shutil.rmtree(self._tmp, ignore_errors=True)
             self._tmp = None
+        if getattr(self, "_lock", None):
+            self._lock.close()  # releases the flock
+            self._lock = None
 
 
 # ---------------------------------------------------------------------------
@@ -1285,10 +1308,13 @@ class Gate:
         return (bool(parts) and parts[0] == "true"), (parts[1] if len(parts) > 1 else "?")
 
     def remove_stale(self) -> None:
-        """Containers a previous, killed gate run of this runner left behind (ours by name only)."""
+        """Containers a killed gate run of this runner left behind: named
+        gate-<key>-<pid>-<n> by a process that no longer exists. A live run's
+        containers are never touched (and the host lock keeps runs apart)."""
         cp = self.podman_cmd("ps", "-a", "--format", "{{.Names}}", "--filter", f"name=^gate-{self.key}-")
         for name in (cp.stdout or "").split():
-            if name.startswith(f"gate-{self.key}-"):
+            m = re.match(rf"^gate-{re.escape(self.key)}-(\d+)-\d+$", name)
+            if m and not self.host.pid_alive(int(m.group(1))):
                 self.host.log(f"removing a container left by an earlier gate run: {name}")
                 self.remove(name)
 
@@ -1681,6 +1707,9 @@ def chk_concurrency(sc: SessionCtx, c: dict) -> tuple[bool, str]:
 
 
 def chk_mtp(sc: SessionCtx, c: dict) -> tuple[bool, str]:
+    rec = sc.lane_state.setdefault("mtp", {})
+    if c["role"] == "off" and not rec.get("on"):
+        raise Skip("the MTP-on session did not run on this lane, nothing to compare")
     st, data = sc.client.post_json("/completion", {"prompt": c.get("prompt", MTP_PROMPT),
                                                    "n_predict": c.get("n_predict", 512), "temperature": 0,
                                                    "cache_prompt": False}, timeout=c.get("timeout", 1200))
@@ -1688,7 +1717,6 @@ def chk_mtp(sc: SessionCtx, c: dict) -> tuple[bool, str]:
         return False, f"HTTP {st} {error_text(data)}".strip()
     timings = data.get("timings") or {}
     tps = float(timings.get("predicted_per_second") or 0.0)
-    rec = sc.lane_state.setdefault("mtp", {})
     if c["role"] == "on":
         drafted, accepted = draft_stats(timings, sc.logs())
         rec["on"] = {"tps": tps, "text": data.get("content", ""), "drafted": drafted, "accepted": accepted}
@@ -1697,9 +1725,7 @@ def chk_mtp(sc: SessionCtx, c: dict) -> tuple[bool, str]:
         if not accepted:
             return False, f"{tps:.1f} t/s, 0 of {drafted} draft tokens accepted"
         return True, f"{tps:.1f} t/s decode with MTP; draft acceptance {accepted}/{drafted} ({100 * accepted / drafted:.0f}%)"
-    on = rec.get("on")
-    if not on:
-        return False, "the MTP-on session did not run on this lane, nothing to compare"
+    on = rec["on"]
     gain = (on["tps"] / tps - 1) * 100 if tps else 0.0
     same = on["text"] == data.get("content", "")
     acc = f"{on['accepted']}/{on['drafted']}" if on.get("drafted") else "n/a"
@@ -1902,6 +1928,7 @@ def main(argv: list[str] | None = None, host: Host | None = None) -> int:
     date = utc_now()
     reports: list[dict] = []
     try:
+        host.lock()
         for k in keys:
             gate = Gate(k, digests[k], tags.get(k), models, host, args.headroom_gib)
             results = gate.run()

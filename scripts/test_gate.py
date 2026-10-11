@@ -446,6 +446,9 @@ class FakeHost(gate.Host):
     def free_port(self):
         return 40000
 
+    def lock(self):
+        pass
+
     def http(self, port):
         return self.fake_http
 
@@ -550,6 +553,36 @@ class GateRunTests(unittest.TestCase):
         self.assertEqual([p["name"] for p in bad], ["cpu/health", "cpu/paris"])
         self.assertIn("exited (139)", bad[0]["detail"])
 
+    def test_stale_cleanup_removes_only_containers_of_dead_runs(self):
+        import os
+        host = self.cpu_host()
+        live, dead = f"gate-cpu-{os.getpid()}-1", "gate-cpu-999999999-1"
+        orig = host.podman
+        host.podman = lambda argv, timeout=None: (
+            subprocess.CompletedProcess(argv, 0, f"{live}\n{dead}\ngate-cpuextra-1-1\n") if argv[1] == "ps"
+            else orig(argv, timeout))
+        gate.Gate("cpu", D1, None, self.models, host).remove_stale()
+        self.assertEqual(host.removed, [dead])
+
+    def test_one_gate_at_a_time(self):
+        import os
+        with tempfile.TemporaryDirectory() as d:
+            old = os.environ.get("XDG_RUNTIME_DIR")
+            os.environ["XDG_RUNTIME_DIR"] = d
+            try:
+                first, second = gate.Host(verbose=False), gate.Host(verbose=False)
+                first.lock()
+                with self.assertRaises(SystemExit):
+                    second.lock()
+                first.cleanup()
+                second.lock()  # free again once the first run is done
+                second.cleanup()
+            finally:
+                if old is None:
+                    os.environ.pop("XDG_RUNTIME_DIR")
+                else:
+                    os.environ["XDG_RUNTIME_DIR"] = old
+
     def test_an_unconfigured_model_is_a_skip(self):
         self.models.entries.clear()
         _, doc = self.run_gate(self.cpu_host(), allow=["cpu/*"])
@@ -598,8 +631,8 @@ class CheckTests(unittest.TestCase):
         self.assertIn("identical: yes", detail)
         inactive = self.ctx({("POST", "/completion"): lambda b: (200, {"content": "e", "timings": {}})})
         self.assertFalse(gate.chk_mtp(inactive, {"role": "on"})[0])
-        self.assertFalse(gate.chk_mtp(self.ctx({("POST", "/completion"): lambda b: (200, {"content": "e"})}),
-                                      {"role": "off"})[0])
+        with self.assertRaises(gate.Skip):  # no MTP-on result to compare with: a skip, not a failure
+            gate.chk_mtp(self.ctx({("POST", "/completion"): lambda b: (200, {"content": "e"})}), {"role": "off"})
 
     def test_structured_runs_every_format_and_thinking_mode(self):
         seen = []
