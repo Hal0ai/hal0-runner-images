@@ -345,6 +345,14 @@ class PromoteTests(unittest.TestCase):
         self.assertEqual(lib.dump_like(json.loads(odd), odd), odd)
         self.assertEqual(json.loads(lib.dump_like({"a": [1, 2], "b": 2}, odd)), {"a": [1, 2], "b": 2})
 
+    def test_dump_like_notices_a_change_of_json_type_that_python_calls_equal(self):
+        raw = json.dumps({"a": 1, "b": 1, "c": [0]}, indent=2) + "\n"
+        for changed in ({"a": True, "b": 1, "c": [0]}, {"a": 1, "b": 1.0, "c": [0]}, {"a": 1, "b": 1, "c": [False]}):
+            self.assertEqual(changed, json.loads(raw))  # Python's own == cannot tell them apart
+            out = lib.dump_like(changed, raw)
+            self.assertNotEqual(out, raw)
+            self.assertEqual(out, json.dumps(changed, indent=2) + "\n")
+
     def test_hal0_pin_edit_updates_one_row_and_keeps_the_rest(self):
         raw = json.dumps({"version": 1, hal0_pins.HAL0_PIN_TABLE: {
             "standard": {"image": "old", "tag": "old", "digest": "old", "lanes_gated": [], "_notes": "keep me"},

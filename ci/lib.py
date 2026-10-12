@@ -170,6 +170,10 @@ def dumps_json(doc: object, indent: int = 2, ensure_ascii: bool = False, compact
 _INLINE_LIST = re.compile(r'^\s*"[^"\n]*": \[[^\[\]{}\n]+\],?$', re.M)
 
 
+def _canonical(doc: object) -> str:
+    return json.dumps(doc, sort_keys=True, ensure_ascii=True)
+
+
 def dump_like(doc: object, raw: str) -> str:
     """Serialise `doc` the way the JSON text `raw` was written, so a diff shows only the edit.
 
@@ -178,7 +182,7 @@ def dump_like(doc: object, raw: str) -> str:
     one in `raw` comes back as `raw` itself, byte for byte.
     """
     original = json.loads(raw)
-    if doc == original:
+    if _canonical(doc) == _canonical(original):  # not ==: Python has 1 == True and 1 == 1.0
         return raw
     for compact in (False, True):
         for ensure_ascii in (False, True):

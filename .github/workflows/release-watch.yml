@@ -113,5 +113,9 @@ jobs:
           git checkout -b "$branch"
           git add -A runners images.json
           git commit -s -m "$title"
-          git push origin "$branch"
+          # bot/* branches belong to this job, and we only get here when no PR is open for
+          # this branch, so a branch left by an earlier run (PR could not be opened) is
+          # replaced. --force, not --force-with-lease: a fresh checkout has no remote-tracking
+          # ref for it, so a lease would have nothing to compare against.
+          git push --force origin "$branch"
           ci/open-pr.sh "$GITHUB_REPOSITORY" "$branch" "$title" "$RUNNER_TEMP/pr.md"
