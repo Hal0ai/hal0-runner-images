@@ -144,14 +144,48 @@ def ghcr_digest(image: str, tag: str, timeout: int = 30) -> str:
     return digest
 
 
+def _scalar(v: object) -> bool:
+    return not isinstance(v, (dict, list))
+
+
+def dumps_json(doc: object, indent: int = 2, ensure_ascii: bool = False, compact_lists: bool = False) -> str:
+    """json.dumps(indent=...) text, optionally with each non-empty list of scalars on one line.
+
+    compact_lists=True writes `"lanes_gated": ["rocm", "vulkan"]` instead of one
+    element per line; lists holding objects or lists are still expanded.
+    """
+    def enc(v: object, level: int) -> str:
+        pad, inner = " " * (indent * level), " " * (indent * (level + 1))
+        if isinstance(v, dict) and v:
+            rows = [f"{inner}{json.dumps(k, ensure_ascii=ensure_ascii)}: {enc(x, level + 1)}" for k, x in v.items()]
+            return "{\n" + ",\n".join(rows) + f"\n{pad}}}"
+        if isinstance(v, list) and v:
+            if compact_lists and all(_scalar(x) for x in v):
+                return "[" + ", ".join(json.dumps(x, ensure_ascii=ensure_ascii) for x in v) + "]"
+            return "[\n" + ",\n".join(inner + enc(x, level + 1) for x in v) + f"\n{pad}]"
+        return json.dumps(v, ensure_ascii=ensure_ascii)
+    return enc(doc, 0)
+
+
+_INLINE_LIST = re.compile(r'^\s*"[^"\n]*": \[[^\[\]{}\n]+\],?$', re.M)
+
+
 def dump_like(doc: object, raw: str) -> str:
-    """Serialise `doc` the way the JSON text `raw` was written, so a diff shows only the edit."""
+    """Serialise `doc` the way the JSON text `raw` was written, so a diff shows only the edit.
+
+    Recognises indent (2 or 4), ensure_ascii, and whether lists of scalars are kept on
+    one line (hal0's manifest.json) or expanded (images.json). A document equal to the
+    one in `raw` comes back as `raw` itself, byte for byte.
+    """
     original = json.loads(raw)
-    for ensure_ascii in (False, True):
-        for indent in (2, 4):
-            if json.dumps(original, indent=indent, ensure_ascii=ensure_ascii) + "\n" == raw:
-                return json.dumps(doc, indent=indent, ensure_ascii=ensure_ascii) + "\n"
-    return json.dumps(doc, indent=2, ensure_ascii=False) + "\n"
+    if doc == original:
+        return raw
+    for compact in (False, True):
+        for ensure_ascii in (False, True):
+            for indent in (2, 4):
+                if dumps_json(original, indent, ensure_ascii, compact) + "\n" == raw:
+                    return dumps_json(doc, indent, ensure_ascii, compact) + "\n"
+    return dumps_json(doc, 2, False, bool(_INLINE_LIST.search(raw))) + "\n"
 
 
 def set_output(name: str, value: str) -> None:
