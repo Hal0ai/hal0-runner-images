@@ -170,14 +170,21 @@ jobs:
             echo "result=unchanged" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # The hal0 PR may touch the pin file and nothing else.
-          pin_file="$(python3 -c 'import sys; sys.path.insert(0, "../ci"); import hal0_pins; print(hal0_pins.HAL0_PIN_FILE)')"
-          changed="$(git diff --name-only)"
-          [[ "$changed" == "$pin_file" ]] || { echo "::error::unexpected files changed in hal0: $changed"; exit 1; }
+          # Regenerate hal0's derived pins export with hal0's own script, then
+          # allow exactly the pin file and that export to change.
+          read -r pin_file export_file < <(python3 -c 'import sys; sys.path.insert(0, "../ci"); import hal0_pins as h; print(h.HAL0_PIN_FILE, h.HAL0_EXPORT_FILE)')
+          export_cmd="$(python3 -c 'import shlex, sys; sys.path.insert(0, "../ci"); import hal0_pins as h; print(shlex.join(h.HAL0_EXPORT_CMD))')"
+          eval "$export_cmd" > "$export_file.tmp"
+          mv "$export_file.tmp" "$export_file"
+          changed="$(git diff --name-only | sort)"
+          allowed="$(printf '%s\n' "$pin_file" "$export_file" | sort)"
+          extra_files="$(comm -23 <(printf '%s\n' "$changed") <(printf '%s\n' "$allowed"))"
+          [[ -z "$extra_files" ]] || { echo "::error::unexpected files changed in hal0: $extra_files"; exit 1; }
+          grep -qxF "$pin_file" <<<"$changed" || { echo "::error::$pin_file did not change but $changed did"; exit 1; }
           git config user.name  "hal0-runner-images-bot"
           git config user.email "bot@hal0.local"
           git checkout -b "$BRANCH"
-          git add "$pin_file"
+          git add "$pin_file" "$export_file"
           git commit -s -m "$TITLE"
           if ! git push --force origin "$BRANCH"; then
             echo "::error::could not push $BRANCH to Hal0ai/hal0"
