@@ -6,11 +6,14 @@
       "title": "Standard",
       "summary": "llama.cpp for AMD GPUs, ROCm or Vulkan, built from the official upstream release.",
       "image": "ghcr.io/hal0ai/hal0-runner-standard",
-      "tag": null,
-      "digest": null,
+      "tag": "b11552-re14329d",
+      "digest": "sha256:2626239586c1c8fcf1ab310000f9d19b26b3a4fa5230f608e65cc9ef2252c462",
       "candidate": null,
-      "gate_report": null,
-      "lanes_gated": [],
+      "gate_report": "https://github.com/Hal0ai/hal0-runner-images/releases/download/gate-llama.cpp-b11552/gate-llama.cpp-b11552-20261011T093626Z.json",
+      "lanes_gated": [
+        "rocm",
+        "vulkan"
+      ],
       "backends": [
         "rocm",
         "vulkan"
@@ -25,11 +28,13 @@
       "title": "CPU",
       "summary": "llama.cpp on the processor, no GPU needed. A slow fallback for boxes without a supported GPU.",
       "image": "ghcr.io/hal0ai/hal0-runner-cpu",
-      "tag": null,
-      "digest": null,
+      "tag": "b11552-re14329d",
+      "digest": "sha256:d8e1cfa2066f6ab3124dd185decd15771c4cdf058ed9c0cee49f62e7f02afd77",
       "candidate": null,
-      "gate_report": null,
-      "lanes_gated": [],
+      "gate_report": "https://github.com/Hal0ai/hal0-runner-images/releases/download/gate-llama.cpp-b11552/gate-llama.cpp-b11552-20261011T093626Z.json",
+      "lanes_gated": [
+        "cpu"
+      ],
       "backends": [
         "cpu"
       ],
@@ -43,11 +48,13 @@
       "title": "NPU (FastFlowLM)",
       "summary": "Runs supported models on the AMD XDNA 2 NPU, leaving the GPU free.",
       "image": "ghcr.io/hal0ai/hal0-runner-flm",
-      "tag": null,
-      "digest": null,
+      "tag": "0.9.44-re14329d",
+      "digest": "sha256:ba7f7edafc07ae2bb96eb94b519b8ab46a8564cdfb9d77372bef611811aa8643",
       "candidate": null,
-      "gate_report": null,
-      "lanes_gated": [],
+      "gate_report": "https://github.com/Hal0ai/hal0-runner-images/releases/download/gate-flm-0.9.44-re14329d/gate-flm-0.9.44-re14329d-20261011T085233Z.json",
+      "lanes_gated": [
+        "npu"
+      ],
       "backends": [
         "npu"
       ],
@@ -61,11 +68,13 @@
       "title": "Kokoro speech",
       "summary": "Text-to-speech on the CPU. Works on any box, no GPU needed.",
       "image": "ghcr.io/hal0ai/hal0-runner-kokoro",
-      "tag": null,
-      "digest": null,
+      "tag": "0.4.9-re14329d",
+      "digest": "sha256:0df4b132be5a5be04f4481940db36365bb95b50aaa0940af0b6f1f5792428325",
       "candidate": null,
-      "gate_report": null,
-      "lanes_gated": [],
+      "gate_report": "https://github.com/Hal0ai/hal0-runner-images/releases/download/gate-kokoro-0.4.9-re14329d/gate-kokoro-0.4.9-re14329d-20261011T085319Z.json",
+      "lanes_gated": [
+        "cpu"
+      ],
       "backends": [
         "cpu"
       ],
@@ -79,11 +88,13 @@
       "title": "Moonshine transcription",
       "summary": "Speech-to-text on the CPU. Works on any box, no GPU or NPU needed.",
       "image": "ghcr.io/hal0ai/hal0-runner-moonshine",
-      "tag": null,
-      "digest": null,
+      "tag": "20251121-re14329d",
+      "digest": "sha256:341b64a5c60496c57407a75077a746ff40bbc2eedbc8ddba1e661094d6818766",
       "candidate": null,
-      "gate_report": null,
-      "lanes_gated": [],
+      "gate_report": "https://github.com/Hal0ai/hal0-runner-images/releases/download/gate-moonshine-20251121-re14329d/gate-moonshine-20251121-re14329d-20261011T085357Z.json",
+      "lanes_gated": [
+        "cpu"
+      ],
       "backends": [
         "cpu"
       ],
@@ -97,11 +108,13 @@
       "title": "ComfyUI",
       "summary": "Image and video generation on the GPU (ROCm).",
       "image": "ghcr.io/hal0ai/hal0-runner-comfyui",
-      "tag": null,
-      "digest": null,
+      "tag": "0.28.0-r6996d85",
+      "digest": "sha256:8c1dd5d7586893a8e27ec2f9fd11623a750b6a4c2ab098e62f9dcd32ec49cfa2",
       "candidate": null,
-      "gate_report": null,
-      "lanes_gated": [],
+      "gate_report": "https://github.com/Hal0ai/hal0-runner-images/releases/download/gate-comfyui-0.28.0-r6996d85/gate-comfyui-0.28.0-r6996d85-20261011T094928Z.json",
+      "lanes_gated": [
+        "rocm"
+      ],
       "backends": [
         "rocm"
       ],
@@ -115,11 +128,13 @@
       "title": "Qwen3 TTS",
       "summary": "Higher-quality multilingual text-to-speech on the GPU (ROCm). Opt-in; a large download (about 10 GB).",
       "image": "ghcr.io/hal0ai/hal0-runner-qwen3tts",
-      "tag": null,
-      "digest": null,
+      "tag": "0.1.1-re14329d",
+      "digest": "sha256:81a914c9622fe35d11d8c0d2f81eee5a882faaad1556ac42a8db6856ad225698",
       "candidate": null,
-      "gate_report": null,
-      "lanes_gated": [],
+      "gate_report": "https://github.com/Hal0ai/hal0-runner-images/releases/download/gate-qwen3tts-0.1.1-re14329d/gate-qwen3tts-0.1.1-re14329d-20261011T085418Z.json",
+      "lanes_gated": [
+        "rocm"
+      ],
       "backends": [
         "rocm"
       ],
