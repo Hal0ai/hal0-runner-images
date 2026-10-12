@@ -142,9 +142,16 @@ def test_catalogue_matches_recipes() -> None:
         for field, want in (("title", r["title"]), ("summary", r["summary"]), ("backends", r["backends"]),
                             ("family", r["family"]), ("tier", r["tier"]), ("image", doc["image"]["package"])):
             check(e[field] == want, f"images.json[{key}].{field} != runners/{key}/manifest.toml ({e[field]!r} vs {want!r})")
+        # `tag` is the promoted pin: it stays on the last gated build while a
+        # bump PR moves the recipe on, so it only has to be a build tag. The
+        # recipe's own version shows up as `candidate` once it is built.
         if e["tag"] is not None:
-            check(e["tag"].startswith(doc["image"]["version"] + "-r"),
-                  f"images.json[{key}].tag {e['tag']!r} is not a build of version {doc['image']['version']}")
+            check(re.fullmatch(r".+-r[0-9a-f]{7}", e["tag"]) is not None,
+                  f"images.json[{key}].tag {e['tag']!r} is not a build tag (<version>-r<sha7>)")
+        cand = e.get("candidate") or {}
+        if cand.get("tag") is not None:
+            check(cand["tag"].startswith(doc["image"]["version"] + "-r"),
+                  f"images.json[{key}].candidate.tag {cand['tag']!r} is not a build of version {doc['image']['version']}")
 
 
 def test_manifests() -> None:
