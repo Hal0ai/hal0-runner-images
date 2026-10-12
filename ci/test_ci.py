@@ -9,6 +9,7 @@ a fake `api` function, every file edit runs against a temp tree.
 
 from __future__ import annotations
 
+import difflib
 import json
 import sys
 import tempfile
@@ -303,6 +304,55 @@ class PromoteTests(unittest.TestCase):
             raw = json.dumps({"a": "é—", "b": [1]}, **kwargs) + "\n"
             self.assertEqual(lib.dump_like(json.loads(raw), raw), raw)
 
+    HAL0_MANIFEST = (
+        '{\n  "_schema": "hal0.manifest.v2",\n  "version": "1.4.0",\n  "runners": {\n'
+        '    "standard": {\n      "image": "ghcr.io/hal0ai/hal0-runner-standard",\n'
+        '      "tag": "b11552-r1a2b3c4",\n      "digest": "%s",\n'
+        '      "lanes_gated": ["rocm", "vulkan"]\n    },\n'
+        '    "cuda": {\n      "image": "ghcr.io/ggml-org/llama.cpp",\n      "tag": "server-cuda-b11541",\n'
+        '      "digest": "%s",\n      "lanes_gated": []\n    }\n  }\n}\n' % (DIGEST, DIGEST))
+
+    def test_noop_hal0_pin_is_byte_identical_and_keeps_inline_lists(self):
+        raw = self.HAL0_MANIFEST
+        self.assertEqual(promote.edit_hal0_pins(raw, [self.RESULT]), raw)
+        # a real change touches only the changed lines and keeps lists on one line
+        changed = promote.edit_hal0_pins(raw, [dict(self.RESULT, tag="b11553-r1a2b3c4", lanes_gated=["vulkan"])])
+        self.assertIn('"lanes_gated": ["vulkan"]', changed)
+        self.assertNotIn('[\n', changed)
+        diff = [l for l in difflib.unified_diff(raw.splitlines(), changed.splitlines(), lineterm="", n=0)
+                if l[:1] in "+-" and l[:3] not in ("+++", "---")]
+        self.assertEqual(len(diff), 4)  # tag and lanes_gated, one line each way
+
+    def test_noop_catalogue_is_byte_identical_on_the_real_images_json(self):
+        raw = (lib.ROOT / "images.json").read_text()
+        items = [{"runner": e["id"], "image": e["image"], "tag": e["tag"], "digest": e["digest"],
+                  "gate_report": e.get("gate_report"), "lanes_gated": e.get("lanes_gated") or []}
+                 for e in json.loads(raw)["runners"] if e.get("tag") and e.get("digest")]
+        self.assertTrue(items)
+        self.assertEqual(promote.edit_catalogue(raw, items), raw)
+
+    def test_dump_like_compact_lists_and_stable_fallback(self):
+        doc = {"a": {"l": ["x", "y"], "e": [], "o": [{"k": 1}], "n": [[1], [2]]}}
+        compact = lib.dumps_json(doc, compact_lists=True) + "\n"
+        self.assertIn('"l": ["x", "y"]', compact)
+        self.assertIn('"e": []', compact)
+        self.assertIn('"o": [\n', compact)  # lists of objects stay expanded
+        self.assertEqual(lib.dump_like(json.loads(compact), compact), compact)
+        expanded = json.dumps(doc, indent=2) + "\n"
+        self.assertEqual(lib.dump_like(json.loads(expanded), expanded), expanded)
+        # text in neither exact style (hand-edited): unchanged doc still returns the text verbatim
+        odd = '{"a":   [1,2],\n "b": 1}'
+        self.assertEqual(lib.dump_like(json.loads(odd), odd), odd)
+        self.assertEqual(json.loads(lib.dump_like({"a": [1, 2], "b": 2}, odd)), {"a": [1, 2], "b": 2})
+
+    def test_dump_like_notices_a_change_of_json_type_that_python_calls_equal(self):
+        raw = json.dumps({"a": 1, "b": 1, "c": [0]}, indent=2) + "\n"
+        for changed in ({"a": True, "b": 1, "c": [0]}, {"a": 1, "b": 1.0, "c": [0]}, {"a": 1, "b": 1, "c": [False]}):
+            self.assertEqual(changed, json.loads(raw))  # Python's own == cannot tell them apart
+            out = lib.dump_like(changed, raw)
+            self.assertNotEqual(out, raw)
+            self.assertEqual(out, json.dumps(changed, indent=2) + "\n")
+
     def test_hal0_pin_edit_updates_one_row_and_keeps_the_rest(self):
         raw = json.dumps({"version": 1, hal0_pins.HAL0_PIN_TABLE: {
             "standard": {"image": "old", "tag": "old", "digest": "old", "lanes_gated": [], "_notes": "keep me"},
@@ -414,6 +464,16 @@ class PromoteTests(unittest.TestCase):
                 promote.check_group(bad)
         # cuda alone, or beside unrelated runners, has nothing to be ahead of
         self.assertIsNone(promote.check_group([item("cuda", "server-cuda-b11541")]))
+        # a mixed set reads as a promotion of N runners, not as a pin of the whole list
+        mixed = group + [item(k, "1.0-r1234567") for k in ("flm", "kokoro", "moonshine", "qwen3tts", "comfyui")]
+        self.assertEqual(promote.describe(mixed)[1],
+                         "chore(runners): promote 8 runners (llama.cpp b11552, cuda server-cuda-b11541)")
+        self.assertEqual(promote.describe([item("kokoro", "1.0-r1234567"), item("flm", "0.9-r1234567")])[1],
+                         "chore(runners): promote 2 runners (kokoro, flm)")
+        self.assertEqual(promote.describe([item("standard", "b11552-r1a2b3c"), item("kokoro", "1.0-r1234567")])[1],
+                         "chore(runners): promote 2 runners (llama.cpp b11552)")
+        self.assertEqual(promote.describe([item("cuda", "server-cuda-b11541"), item("kokoro", "1.0-r1234567")])[1],
+                         "chore(runners): promote 2 runners (cuda server-cuda-b11541)")
         self.assertEqual(promote.describe([item("kokoro", "1.0-r1234567")]),
                          ("bot/promote-kokoro-1.0-r1234567", "chore(runners): pin kokoro to 1.0-r1234567"))
         self.assertIsNone(promote.check_group([item("kokoro", "1.0-r1234567"), item("flm", "0.9.44-r1234567")]))

@@ -14,12 +14,15 @@ name: Release watch
 # merges it, and the merge builds the immutable tag. Nothing here builds,
 # pushes, pins or merges.
 #
-# SECRET (optional but needed for CI on the bump PR): RUNNER_IMAGES_PR_TOKEN, a
+# SECRET (REQUIRED for the bot to open the bump PR): RUNNER_IMAGES_PR_TOKEN, a
 # fine-grained PAT (or GitHub App token) with Contents + Pull requests: write on
-# this repository. PRs opened with the default GITHUB_TOKEN do not trigger
-# build.yml, so without the secret the bump PR gets no CI run. The fallback
-# works but the job warns, and the repository setting "Allow GitHub Actions to
-# create and approve pull requests" must be on.
+# this repository. The Hal0ai org policy forbids pull requests created by GitHub
+# Actions ("GitHub Actions is not permitted to create or approve pull requests"),
+# and the default token is Actions. PRs opened with the default GITHUB_TOKEN also
+# do not trigger build.yml. Without the secret the job still pushes the bump
+# branch, warns with the exact compare URL and title, and writes both to the job
+# summary; a person opens the PR from the pushed branch. A pull request that
+# cannot be opened never fails the job.
 
 on:
   schedule:
@@ -93,7 +96,7 @@ jobs:
           title="$(jq -r '.bump.title // empty' "$RUNNER_TEMP/result.json")"
           if [[ -z "$branch" ]]; then echo "nothing to bump"; exit 0; fi
           if [[ -z "${{ secrets.RUNNER_IMAGES_PR_TOKEN }}" ]]; then
-            echo "::warning::RUNNER_IMAGES_PR_TOKEN is not set: the bump PR will not get a build.yml run until it is closed and reopened by a person."
+            echo "::warning::RUNNER_IMAGES_PR_TOKEN is not set: the org policy may refuse a bot-opened PR (then a person opens it from the pushed branch), and a bot-opened PR gets no build.yml run until closed and reopened."
           fi
 
           # At most one open bump PR: keep one for this exact change, close older ones as superseded.
@@ -110,5 +113,9 @@ jobs:
           git checkout -b "$branch"
           git add -A runners images.json
           git commit -s -m "$title"
-          git push origin "$branch"
-          gh pr create --base main --head "$branch" --title "$title" --body-file "$RUNNER_TEMP/pr.md"
+          # bot/* branches belong to this job, and we only get here when no PR is open for
+          # this branch, so a branch left by an earlier run (PR could not be opened) is
+          # replaced. --force, not --force-with-lease: a fresh checkout has no remote-tracking
+          # ref for it, so a lease would have nothing to compare against.
+          git push --force origin "$branch"
+          ci/open-pr.sh "$GITHUB_REPOSITORY" "$branch" "$title" "$RUNNER_TEMP/pr.md"

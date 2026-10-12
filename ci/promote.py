@@ -208,19 +208,28 @@ def check_group(items: list[dict]) -> int | None:
 
 
 def describe(items: list[dict]) -> tuple[str, str]:
-    """(branch, pull request title) for a promotion."""
+    """(branch, pull request title) for a promotion.
+
+    One runner:                 pin kokoro to 1.0-r1234567
+    The llama.cpp group alone:  pin standard, cpu, cuda to llama.cpp b11552 (cuda server-cuda-b11541)
+    Anything mixed:             promote 8 runners (llama.cpp b11552, cuda server-cuda-b11541)
+    """
     keys = [i["runner"] for i in items]
     release = check_group(items)
+    cuda = next((i["tag"] for i in items if i["runner"] == CUDA), "")
     if len(items) == 1:
-        label = f"{keys[0]} to {items[0]['tag']}"
         branch = f"bot/promote-{keys[0]}-{items[0]['tag']}"
+        return branch, f"chore(runners): pin {keys[0]} to {items[0]['tag']}"
+    digests = hashlib.sha256("".join(sorted(i["digest"] for i in items)).encode()).hexdigest()[:7]
+    branch = f"bot/promote-{'-'.join(sorted(keys))}-{digests}"
+    if release and set(keys) <= {*LLAMA_GROUP, CUDA}:
+        label = f"pin {', '.join(keys)} to llama.cpp b{release}" + (f" (cuda {cuda})" if cuda else "")
     else:
-        digests = hashlib.sha256("".join(sorted(i["digest"] for i in items)).encode()).hexdigest()[:7]
-        what = f"llama.cpp b{release}" if release and set(keys) <= {*LLAMA_GROUP, CUDA} else f"{len(keys)} runners"
-        cuda = next((i["tag"] for i in items if i["runner"] == CUDA), "")
-        label = f"{', '.join(keys)} to {what}" + (f" (cuda {cuda})" if cuda and release else "")
-        branch = f"bot/promote-{'-'.join(sorted(keys))}-{digests}"
-    return branch, f"chore(runners): pin {label}"
+        notes = ([f"llama.cpp b{release}"] if release else []) + ([f"cuda {cuda}"] if cuda else [])
+        if not notes and len(keys) <= 4:
+            notes = keys
+        label = f"promote {len(keys)} runners" + (f" ({', '.join(notes)})" if notes else "")
+    return branch, f"chore(runners): {label}"
 
 
 def pr_body(items: list[dict]) -> str:

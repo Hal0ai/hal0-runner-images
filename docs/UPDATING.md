@@ -335,11 +335,13 @@ classify).
 | name | where | used by | needs |
 |---|---|---|---|
 | `HAL0_MANIFEST_PR_TOKEN` | repo secret (exists) | `promote.yml` | fine-grained PAT, Contents + Pull requests: write on `Hal0ai/hal0`. Required |
-| `RUNNER_IMAGES_PR_TOKEN` | repo secret (new, optional) | `release-watch.yml`, `promote.yml` | PAT or app token, Contents + Pull requests: write on this repo. Without it the bump and `images.json` PRs open but get no CI run until closed and reopened |
+| `RUNNER_IMAGES_PR_TOKEN` | repo secret (required for bot-opened PRs) | `release-watch.yml`, `promote.yml` | PAT or app token, Contents + Pull requests: write on this repo. The Hal0ai org policy forbids Actions-created PRs, so without it the branch is pushed but the bump and `images.json` PRs are not opened: the run warns with the compare URL and title, and a person opens the PR from the pushed branch |
 | `HAL0_RETENTION_TOKEN` | repo secret (exists) | `retention.yml` | classic PAT, `read:packages` + `delete:packages` |
 
-Repository settings: Actions workflow permissions read and write, and "Allow
-GitHub Actions to create and approve pull requests" on. Each new
+Repository settings: Actions workflow permissions read and write. The Hal0ai
+org policy "Allow GitHub Actions to create and approve pull requests" is off and
+cannot be overridden per repository, which is why `RUNNER_IMAGES_PR_TOKEN` is
+needed for the bot to open PRs. Each new
 `hal0-runner-<key>` package must be set public in GHCR and given this repository
 as an Actions write target before the first push, or hal0 cannot pull it
 anonymously.

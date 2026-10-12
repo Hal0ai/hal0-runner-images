@@ -32,10 +32,21 @@ name: Promote runner image
 #   HAL0_MANIFEST_PR_TOKEN   (already exists, used by the old pin-digests
 #                             workflow) fine-grained PAT with Contents + Pull
 #                             requests: write on Hal0ai/hal0. Required.
-#   RUNNER_IMAGES_PR_TOKEN   optional PAT with Contents + Pull requests: write on
-#                             this repo, so the images.json PR gets CI. Falls
-#                             back to the default token (then that PR gets no
-#                             CI run until closed and reopened).
+#   RUNNER_IMAGES_PR_TOKEN   fine-grained PAT with Contents + Pull requests:
+#                             write on THIS repository. REQUIRED for the bot to
+#                             open the images.json PR: the Hal0ai org policy
+#                             forbids pull requests created by GitHub Actions
+#                             ("GitHub Actions is not permitted to create or
+#                             approve pull requests"), and the default token is
+#                             Actions. It also makes that PR get a CI run.
+#                             Without it the run still pushes the branch,
+#                             warns with the exact compare URL and title, and
+#                             writes both to the job summary: a person opens
+#                             the PR from the pushed branch.
+#
+# A pull request that cannot be opened never fails the job and never skips the
+# hal0 step. Each branch push is reported; the job fails only when no branch was
+# pushed and at least one push failed.
 
 on:
   workflow_dispatch:
@@ -105,7 +116,8 @@ jobs:
             --gate-reports "$GATE_REPORTS" --token "$GH_TOKEN" --out "$RUNNER_TEMP/result.json"
           python3 ci/promote.py pr-body --result "$RUNNER_TEMP/result.json" > "$RUNNER_TEMP/pr.md"
 
-      - name: Open the images.json pull request (this repository)
+      - name: Push the images.json branch and open its pull request (this repository)
+        id: images
         env:
           GH_TOKEN: ${{ env.THIS_TOKEN }}
           BRANCH: ${{ steps.verify.outputs.branch }}
@@ -113,7 +125,11 @@ jobs:
         run: |
           set -euo pipefail
           python3 ci/promote.py catalogue --result "$RUNNER_TEMP/result.json"
-          if git diff --quiet; then echo "images.json already has these pins; nothing to do"; exit 0; fi
+          if git diff --quiet; then
+            echo "images.json already has these pins; nothing to do"
+            echo "result=unchanged" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           changed="$(git diff --name-only)"
           [[ "$changed" == "images.json" ]] || { echo "::error::unexpected files changed: $changed"; exit 1; }
           git config user.name  "hal0-runner-images-bot"
@@ -121,12 +137,13 @@ jobs:
           git checkout -b "$BRANCH"
           git add images.json
           git commit -s -m "$TITLE"
-          git push --force origin "$BRANCH"
-          if gh pr view "$BRANCH" --json state --jq '.state' 2>/dev/null | grep -qx OPEN; then
-            gh pr edit "$BRANCH" --title "$TITLE" --body-file "$RUNNER_TEMP/pr.md"
-          else
-            gh pr create --base main --head "$BRANCH" --title "$TITLE" --body-file "$RUNNER_TEMP/pr.md"
+          if ! git push --force origin "$BRANCH"; then
+            echo "::error::could not push $BRANCH to $GITHUB_REPOSITORY; the hal0 pin step still runs"
+            echo "result=failed" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          echo "result=pushed" >> "$GITHUB_OUTPUT"
+          ci/open-pr.sh "$GITHUB_REPOSITORY" "$BRANCH" "$TITLE" "$RUNNER_TEMP/pr.md"
 
       - name: Check out Hal0ai/hal0
         uses: actions/checkout@v6
@@ -135,7 +152,8 @@ jobs:
           path: app
           token: ${{ secrets.HAL0_MANIFEST_PR_TOKEN }}
 
-      - name: Open the pin pull request (Hal0ai/hal0)
+      - name: Push the pin branch and open its pull request (Hal0ai/hal0)
+        id: hal0
         working-directory: app
         env:
           GH_TOKEN: ${{ env.HAL0_TOKEN }}
@@ -147,7 +165,11 @@ jobs:
           extra=()
           if [[ "$CREATE_MISSING" == "true" ]]; then extra=(--create-missing); fi
           python3 ../ci/promote.py hal0-pin --result "$RUNNER_TEMP/result.json" --hal0-dir . "${extra[@]}"
-          if git diff --quiet; then echo "hal0 already has these pins; nothing to do"; exit 0; fi
+          if git diff --quiet; then
+            echo "hal0 already has these pins; nothing to do"
+            echo "result=unchanged" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           # The hal0 PR may touch the pin file and nothing else.
           pin_file="$(python3 -c 'import sys; sys.path.insert(0, "../ci"); import hal0_pins; print(hal0_pins.HAL0_PIN_FILE)')"
           changed="$(git diff --name-only)"
@@ -157,9 +179,30 @@ jobs:
           git checkout -b "$BRANCH"
           git add "$pin_file"
           git commit -s -m "$TITLE"
-          git push --force origin "$BRANCH"
-          if gh pr view "$BRANCH" --json state --jq '.state' 2>/dev/null | grep -qx OPEN; then
-            gh pr edit "$BRANCH" --title "$TITLE" --body-file "$RUNNER_TEMP/pr.md"
-          else
-            gh pr create --repo Hal0ai/hal0 --base main --head "$BRANCH" --title "$TITLE" --body-file "$RUNNER_TEMP/pr.md"
+          if ! git push --force origin "$BRANCH"; then
+            echo "::error::could not push $BRANCH to Hal0ai/hal0"
+            echo "result=failed" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "result=pushed" >> "$GITHUB_OUTPUT"
+          ../ci/open-pr.sh Hal0ai/hal0 "$BRANCH" "$TITLE" "$RUNNER_TEMP/pr.md"
+
+      - name: Report the outcome
+        env:
+          IMAGES: ${{ steps.images.outputs.result }}
+          HAL0: ${{ steps.hal0.outputs.result }}
+        run: |
+          set -euo pipefail
+          echo "images.json branch: ${IMAGES:-unknown}; hal0 pin branch: ${HAL0:-unknown}"
+          {
+            echo "### Promote result"
+            echo
+            echo "- images.json (this repository): ${IMAGES:-unknown}"
+            echo "- pin table (Hal0ai/hal0): ${HAL0:-unknown}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          # Fail only when nothing was pushed and a push failed. A pull request
+          # that could not be opened is a warning (see ci/open-pr.sh), not a failure.
+          if [[ "$IMAGES" != "pushed" && "$HAL0" != "pushed" ]] && [[ "$IMAGES" == "failed" || "$HAL0" == "failed" ]]; then
+            echo "::error::neither branch was pushed; nothing was promoted"
+            exit 1
           fi
