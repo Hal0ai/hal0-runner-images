@@ -6,10 +6,10 @@
       "title": "Standard",
       "summary": "llama.cpp for AMD GPUs, ROCm or Vulkan, built from the official upstream release.",
       "image": "ghcr.io/hal0ai/hal0-runner-standard",
-      "tag": "b11574-r25e5d85",
-      "digest": "sha256:20407105fe0edbbcf793140cecee8efd6b182c854c8c871149c92ff3f664d555",
+      "tag": "b11596-r6d1fb9e",
+      "digest": "sha256:fc3d6cc50d618e7377570487fa7d8c9a888470b3c46fc9fc944dbd0b0f2fd840",
       "candidate": null,
-      "gate_report": "https://github.com/Hal0ai/hal0-runner-images/releases/download/gate-llama.cpp-b11574/gate-llama.cpp-b11574-20261012T185415Z.json",
+      "gate_report": "https://github.com/Hal0ai/hal0-runner-images/releases/download/gate-standard-b11596-r6d1fb9e/gate-standard-b11596-r6d1fb9e-20261013T210712Z.json",
       "lanes_gated": [
         "rocm",
         "vulkan"
@@ -28,10 +28,10 @@
       "title": "CPU",
       "summary": "llama.cpp on the processor, no GPU needed. A slow fallback for boxes without a supported GPU.",
       "image": "ghcr.io/hal0ai/hal0-runner-cpu",
-      "tag": "b11574-r25e5d85",
-      "digest": "sha256:c67017e69978b08d04fe82fdf57eaa1c678734446ad078e6f4c73c7c63268f9d",
+      "tag": "b11596-r6d1fb9e",
+      "digest": "sha256:6df2edf6f2b5da304e4d9d8e3d0e1a9a60768253126ac6d35edf13cfe02d7d35",
       "candidate": null,
-      "gate_report": "https://github.com/Hal0ai/hal0-runner-images/releases/download/gate-llama.cpp-b11574/gate-llama.cpp-b11574-20261012T185415Z.json",
+      "gate_report": "https://github.com/Hal0ai/hal0-runner-images/releases/download/gate-cpu-b11596-r6d1fb9e/gate-cpu-b11596-r6d1fb9e-20261013T212031Z.json",
       "lanes_gated": [
         "cpu"
       ],
@@ -148,12 +148,9 @@
       "title": "NVIDIA CUDA",
       "summary": "llama.cpp for NVIDIA GPUs. Pick it on a box with an NVIDIA card.",
       "image": "ghcr.io/ggml-org/llama.cpp",
-      "tag": "server-cuda-b11561",
-      "digest": "sha256:20c6e722e2fcc5ca9c15401d3fd8e35408aaf8f9c54a12f32920f637c57959bb",
-      "candidate": {
-        "tag": "server-cuda-b11580",
-        "digest": "sha256:c4348afb91499b10fad12f92626c7a8ca8b69d6475d10c793b810cb61237ce00"
-      },
+      "tag": "server-cuda-b11580",
+      "digest": "sha256:c4348afb91499b10fad12f92626c7a8ca8b69d6475d10c793b810cb61237ce00",
+      "candidate": null,
       "gate_report": null,
       "lanes_gated": [],
       "backends": [
