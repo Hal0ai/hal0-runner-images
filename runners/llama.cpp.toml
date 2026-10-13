@@ -13,6 +13,6 @@ repo = "https://github.com/ggml-org/llama.cpp.git"
 #: rms_norm). Gate risk items: #30210 (chat API refactor touching tool calls,
 #: grammar and reasoning-format) and #30159 (llama-server's default port is
 #: now 9931; runners/standard's entrypoint always passes --port).
-version = "b11574"
-ref = "8bb3cf0d216a5ae48360179f2931daf284be4d01"
-ref_description = "release b11574: hexagon: optimize CPY/CONCAT — round 3, short-rows edition (#30341)"
+version = "b11596"
+ref = "a17e94d229fc7fed1567a799baebd11b771fe5af"
+ref_description = "release b11596: tests : consolidate context state tests into test-llama-context (#30023)"
