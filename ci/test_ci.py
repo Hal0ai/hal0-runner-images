@@ -329,7 +329,15 @@ class PromoteTests(unittest.TestCase):
                   "gate_report": e.get("gate_report"), "lanes_gated": e.get("lanes_gated") or []}
                  for e in json.loads(raw)["runners"] if e.get("tag") and e.get("digest")]
         self.assertTrue(items)
-        self.assertEqual(promote.edit_catalogue(raw, items), raw)
+        # Promoting what is already pinned changes nothing except clearing a
+        # pending candidate: a bump branch carries one (an external runner such
+        # as cuda gets its candidate at bump time), so the fixed point is the
+        # catalogue with every candidate cleared, not the raw file itself.
+        doc = json.loads(raw)
+        for entry in doc["runners"]:
+            if "candidate" in entry:
+                entry["candidate"] = None
+        self.assertEqual(promote.edit_catalogue(raw, items), lib.dump_like(doc, raw))
 
     def test_dump_like_compact_lists_and_stable_fallback(self):
         doc = {"a": {"l": ["x", "y"], "e": [], "o": [{"k": 1}], "n": [[1], [2]]}}
