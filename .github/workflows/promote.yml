@@ -33,7 +33,8 @@ name: Promote runner image
 #                             workflow) fine-grained PAT with Contents + Pull
 #                             requests: write on Hal0ai/hal0. Required.
 #   RUNNER_IMAGES_PR_TOKEN   fine-grained PAT with Contents + Pull requests:
-#                             write on THIS repository. REQUIRED for the bot to
+#                             write on THIS repository (release-watch.yml
+#                             also needs Issues: write on the same secret). REQUIRED for the bot to
 #                             open the images.json PR: the Hal0ai org policy
 #                             forbids pull requests created by GitHub Actions
 #                             ("GitHub Actions is not permitted to create or
