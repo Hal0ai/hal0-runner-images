@@ -22,7 +22,12 @@ import json
 
 HAL0_REPO = "Hal0ai/hal0"
 OWN_IMAGE_PREFIX = "ghcr.io/hal0ai/"      # retention only protects images in our own namespace
-HAL0_PIN_FILE = "manifest.json"          # the ONLY file a promote PR in hal0 may touch
+HAL0_PIN_FILE = "manifest.json"          # the file promote edits in hal0
+#: Derived from the pin table by hal0's own script; promote regenerates it with
+#: HAL0_EXPORT_CMD so the pin PR passes hal0's export check. A promote PR in
+#: hal0 may touch these two files and nothing else.
+HAL0_EXPORT_FILE = "exports/runner-image-pins.json"
+HAL0_EXPORT_CMD = ["python3", "-I", "scripts/check_runner_pins.py", "--export"]
 HAL0_PIN_TABLE = "runners"               # top-level object in that file (key -> row)
 HAL0_FIELDS = {                          # our value -> hal0 row field
     "image": "image",                    # ghcr.io/hal0ai/hal0-runner-<key>
