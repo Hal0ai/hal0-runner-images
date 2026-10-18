@@ -8,11 +8,12 @@
 
 [llama_cpp]
 repo = "https://github.com/ggml-org/llama.cpp.git"
-#: Release b11552 (2026-10-10). Picked up since b11510: #30103 (HIP flash
-#: attention race fix), #30257 (MTP together with mmproj), #30145 (Vulkan
-#: rms_norm). Gate risk items: #30210 (chat API refactor touching tool calls,
-#: grammar and reasoning-format) and #30159 (llama-server's default port is
-#: now 9931; runners/standard's entrypoint always passes --port).
-version = "b11596"
-ref = "a17e94d229fc7fed1567a799baebd11b771fe5af"
-ref_description = "release b11596: tests : consolidate context state tests into test-llama-context (#30023)"
+#: Release b11716 (2026-10-17). Picked up since b11596: #30520 (Nemotron
+#: Super 3.5 VL and Nemotron Bolt 74B-A9B, including the nemotron_omni
+#: projector), #28195 (HIP 64-row MMQ tiles on RDNA3.5), #30580 (SWA cache
+#: reuse off-by-two). Gate risk items: #30389 (chat output becomes parts,
+#: touching tool calls and reasoning), #30362/#30483/#30533 (jinja tojson and
+#: loop scoping), #30498/#30567/#30574 (server slot and prompt-cache state).
+version = "b11716"
+ref = "797de63b2fa7396dcc8caca76834c699ac84e1c3"
+ref_description = "release b11716: hexagon: add support for Q1_0 and Q2_0 (#30122)"
