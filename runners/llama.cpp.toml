@@ -14,6 +14,6 @@ repo = "https://github.com/ggml-org/llama.cpp.git"
 #: reuse off-by-two). Gate risk items: #30389 (chat output becomes parts,
 #: touching tool calls and reasoning), #30362/#30483/#30533 (jinja tojson and
 #: loop scoping), #30498/#30567/#30574 (server slot and prompt-cache state).
-version = "b11716"
-ref = "797de63b2fa7396dcc8caca76834c699ac84e1c3"
-ref_description = "release b11716: hexagon: add support for Q1_0 and Q2_0 (#30122)"
+version = "b11729"
+ref = "412a363c655b479279d3050d0d1c67a5733697b4"
+ref_description = "release b11729: qwen3 : bidirectional attention and dense_2 output projection (#30607)"
