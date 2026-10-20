@@ -32,10 +32,9 @@ startup_timeout = 300
 
   [[session.check]]
   name = "health"
-  doc = "/health returns 200 with model_loaded=true (model moonshine-small_streaming-en)"
+  doc = "/health returns 200 with model_loaded=true (model moonshine-base-en: small_streaming is served by the base weights)"
   kind = "http-json"
-  equals = { model_loaded = true }
-  contains = { model_id = "small_streaming" }
+  equals = { model_loaded = true, model_id = "moonshine-base-en" }
 
   [[session.check]]
   name = "transcribe"
