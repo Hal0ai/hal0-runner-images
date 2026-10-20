@@ -61,6 +61,35 @@ _ARCH_TO_HF_NAME = {
 }
 
 
+# Weights the library ships (and so the only model ids this server can report),
+# keyed by the HF name `_ARCH_TO_HF_NAME` resolves to. The id reports what was
+# loaded, not what --model_arch asked for: small, *_streaming archs alias to
+# these weights.
+_HF_NAME_TO_MODEL_ID = {
+    "moonshine/tiny": "moonshine-tiny-en",
+    "moonshine/base": "moonshine-base-en",
+}
+
+# Streaming-layout bundles (separate frontend/encoder/adapter/decoder_kv
+# files) are not loadable by MoonshineOnnxModel, which only reads
+# encoder_model.* and decoder_model_merged.*.
+_STREAMING_LAYOUT_FILES = ("frontend", "encoder", "adapter", "cross_kv", "decoder_kv")
+
+
+class UnsupportedModelLayout(ValueError):
+    """model_path holds a Moonshine bundle this server cannot load."""
+
+
+def _detect_streaming_layout(model_dir: Path) -> list[str]:
+    """Return the streaming-layout files (<name>.ort / <name>.onnx) in model_dir."""
+    return sorted(
+        f"{name}.{ext}"
+        for name in _STREAMING_LAYOUT_FILES
+        for ext in ("ort", "onnx")
+        if (model_dir / f"{name}.{ext}").is_file()
+    )
+
+
 def _detect_local_format(model_dir: Path) -> str | None:
     """Return 'ort' or 'onnx' based on which encoder weights exist locally.
 
@@ -114,6 +143,14 @@ def _load_model(model_arch: str, model_path: str | None) -> None:
             local_format = _detect_local_format(candidate)
             if local_format:
                 local_dir = candidate
+            elif streaming := _detect_streaming_layout(candidate):
+                raise UnsupportedModelLayout(
+                    f"model_path={model_path} is in the streaming layout "
+                    f"({', '.join(streaming)}), which this server does not "
+                    "support; supported layout: encoder_model.ort and "
+                    "decoder_model_merged.ort (or .onnx), as shipped for "
+                    "moonshine tiny-en and base-en"
+                )
             else:
                 log.warning(
                     "model_path=%s is a dir but has no encoder_model.{ort,onnx}; "
@@ -149,7 +186,16 @@ def _load_model(model_arch: str, model_path: str | None) -> None:
 
     _state["model"] = model
     _state["model_arch"] = model_arch
-    _state["model_id"] = f"moonshine-{model_arch}-en"
+    # Report the weights actually loaded, not the requested arch.
+    model_id = _HF_NAME_TO_MODEL_ID[hf_name]
+    if model_id != f"moonshine-{model_arch}-en":
+        log.warning(
+            "model_arch=%s is served by the %s weights; reporting model_id=%s",
+            model_arch,
+            hf_name,
+            model_id,
+        )
+    _state["model_id"] = model_id
     _state["model_path"] = resolved_path
     _state["loaded"] = True
     log.info("moonshine loaded: model_id=%s", _state["model_id"])
