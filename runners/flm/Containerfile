@@ -94,18 +94,18 @@ RUN mkdir -p build && cd build \
 FROM ${UBUNTU} AS flm-builder
 
 ARG DEBIAN_FRONTEND=noninteractive
-# FastFlowLM release v0.9.44, pinned by commit in manifest.toml.
+# FastFlowLM release v1.0.10, pinned by commit in manifest.toml.
 ARG FLM_REPO
 ARG FLM_REF
 
 # Pull the freshly-built XRT in so FLM can link against it.
 COPY --from=xrt-builder /opt/xilinx/xrt /opt/xilinx/xrt
 
-# Dep list mirrors upstream FastFlowLM/Dockerfile (main): adds rust
-# toolchain (FLM ships Rust components since 2026-04), nasm + patchelf
-# (xclbin packaging), and the full ffmpeg dev libs (libavutil,
-# libswresample) — the prior hand-picked subset compiled against an
-# older release that predated the Rust rewrite of FLM's tokenizer.
+# Dep list mirrors upstream ROCm/FastFlowLM's Dockerfile at the pinned
+# release: the Rust toolchain (installed below) for tokenizers-cpp, nasm +
+# patchelf (xclbin packaging), and libedit for the CLI's line editing. Since
+# v1.0 FLM no longer links ffmpeg, fftw or GNU readline (upstream dropped
+# readline for libedit, which is BSD-licensed and implements its API).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         cmake \
@@ -115,13 +115,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         libboost-program-options-dev \
         libcurl4-openssl-dev \
-        libfftw3-dev \
-        libavformat-dev \
-        libavcodec-dev \
-        libavutil-dev \
-        libswscale-dev \
-        libswresample-dev \
-        libreadline-dev \
+        libedit-dev \
         libdrm-dev \
         nasm \
         patchelf \
@@ -168,9 +162,9 @@ FROM ${UBUNTU} AS runtime
 ARG DEBIAN_FRONTEND=noninteractive
 
 # Runtime deps only — no compilers, headers, or source.
-# Boost-program-options, FFTW, ffmpeg-libs, readline are FLM's runtime
-# link-time deps; libdrm/libelf/libudev are XRT's; curl/ca-certificates
-# for FLM's model pull from HF.
+# Boost-program-options and libedit are FLM's runtime link-time deps;
+# libdrm/libelf/libudev are XRT's; curl/ca-certificates for FLM's model
+# pull from HF. The ldd check below fails the build if any is missing.
 # NOTE: XRT links BOTH boost_program_options AND boost_filesystem (see XRT
 # boostUtil.cmake) but XRT does not declare the filesystem dep (Xilinx/XRT
 # #6295). Without libboost-filesystem, `xrt-smi` dies with
@@ -181,11 +175,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libboost-filesystem1.83.0 \
         libboost-system1.83.0 \
         libcurl4 \
-        libfftw3-single3 \
-        libavformat60 \
-        libavcodec60 \
-        libswscale7 \
-        libreadline8t64 \
+        libedit2 \
         libdrm2 \
         libelf1t64 \
         libudev1 \
@@ -217,6 +207,12 @@ ENV LD_LIBRARY_PATH=/opt/xilinx/xrt/lib:/opt/fastflowlm/lib \
 # binary is used because the wrapped `xrt-smi` is a python shim that expects
 # `source setup.sh`; the unwrapped binary runs directly off LD_LIBRARY_PATH.
 RUN /opt/xilinx/xrt/bin/unwrapped/xrt-smi --version
+
+# Build-time smoke: every shared library flm and its prebuilt engine libs need
+# must resolve. The runtime package list above is hand-kept, and a missing
+# library otherwise shows up only when a model loads on the NPU box.
+RUN missing="$(ldd /opt/fastflowlm/bin/flm /opt/fastflowlm/lib/*.so* 2>/dev/null | grep 'not found' | sort -u)"; \
+    if [ -n "$missing" ]; then echo "unresolved shared libraries:"; echo "$missing"; exit 1; fi
 
 # UID/GID match host hal0; bind-mounted model cache reads cleanly.
 # NOTE: FLM defaults its model cache to ~/.config/flm; the slot's
