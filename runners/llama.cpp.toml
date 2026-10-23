@@ -8,12 +8,16 @@
 
 [llama_cpp]
 repo = "https://github.com/ggml-org/llama.cpp.git"
-#: Release b11716 (2026-10-17). Picked up since b11596: #30520 (Nemotron
-#: Super 3.5 VL and Nemotron Bolt 74B-A9B, including the nemotron_omni
-#: projector), #28195 (HIP 64-row MMQ tiles on RDNA3.5), #30580 (SWA cache
-#: reuse off-by-two). Gate risk items: #30389 (chat output becomes parts,
-#: touching tool calls and reasoning), #30362/#30483/#30533 (jinja tojson and
-#: loop scoping), #30498/#30567/#30574 (server slot and prompt-cache state).
-version = "b11716"
-ref = "797de63b2fa7396dcc8caca76834c699ac84e1c3"
-ref_description = "release b11716: hexagon: add support for Q1_0 and Q2_0 (#30122)"
+#: Release b11840 (2026-10-23). Picked up since b11716: #30928 (Flint,
+#: FlintForCausalLM), #30927/#30945/#30663 (qwen4exp DFlash layer inputs,
+#: DFlash FC input scale, DFlash2 probabilistic drafts), #27196 (logprobs
+#: with speculative decoding), #30666 (SWA checkpoint invalidation),
+#: #30836 (HIP mmf reduction for tile widths not divisible by 64), #30861
+#: (MoE down projection scaled per expert token). Gate risk items: #30856 and
+#: #28554 (/v1/messages sampling params and slot id), #30863 (Responses SSE
+#: output_index), #30819/#30929/#30941 (jinja filters and namespaces),
+#: #30785/#30889 (vendored cpp-httplib 0.62.0 and BoringSSL). #28277 adds an
+#: opt-in `--connect` p2p mode; hal0 never passes it.
+version = "b11840"
+ref = "36e36e63a54fc8f85b95e9c499a022b597e478dd"
+ref_description = "release b11840: hexagon: add CEIL op (#31006)"
