@@ -14,6 +14,6 @@ repo = "https://github.com/ggml-org/llama.cpp.git"
 #: reuse off-by-two). Gate risk items: #30389 (chat output becomes parts,
 #: touching tool calls and reasoning), #30362/#30483/#30533 (jinja tojson and
 #: loop scoping), #30498/#30567/#30574 (server slot and prompt-cache state).
-version = "b11716"
-ref = "797de63b2fa7396dcc8caca76834c699ac84e1c3"
-ref_description = "release b11716: hexagon: add support for Q1_0 and Q2_0 (#30122)"
+version = "b11840"
+ref = "36e36e63a54fc8f85b95e9c499a022b597e478dd"
+ref_description = "release b11840: hexagon: add CEIL op (#31006)"
