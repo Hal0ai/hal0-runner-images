@@ -61,7 +61,7 @@
       "family": "flm",
       "tier": "default",
       "recipe": "runners/flm",
-      "maintainer_notes": "FastFlowLM v0.9.44 with XRT/xdna-driver 2.21.75. Needs the amdxdna driver and /dev/accel on the host."
+      "maintainer_notes": "FastFlowLM v1.0.10 with XRT/xdna-driver 2.21.75. Needs the amdxdna driver and /dev/accel on the host."
     },
     {
       "id": "kokoro",

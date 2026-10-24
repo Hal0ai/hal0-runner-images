@@ -14,7 +14,7 @@ One name per runner, used everywhere: the hal0 runner key, the catalogue
 |---|---|---|---|---|
 | `standard` | Standard | llama.cpp on AMD GPUs, ROCm and Vulkan (gfx1151) | ggml-org/llama.cpp release `b11552` | default |
 | `cpu` | CPU | llama.cpp on the processor, any x86_64 box | ggml-org/llama.cpp release `b11552` | default |
-| `flm` | NPU (FastFlowLM) | FastFlowLM on the AMD XDNA 2 NPU | ROCm/FastFlowLM `v0.9.44` | default |
+| `flm` | NPU (FastFlowLM) | FastFlowLM on the AMD XDNA 2 NPU | ROCm/FastFlowLM `v1.0.10` | default |
 | `kokoro` | Kokoro speech | text-to-speech on the CPU | kokoro-onnx `0.4.9` | default |
 | `moonshine` | Moonshine transcription | speech-to-text on the CPU | useful-moonshine-onnx `20251121` | default |
 | `comfyui` | ComfyUI | image and video generation on the GPU (ROCm) | Comfy-Org/ComfyUI `0.28.0` (commit `c9602625`) | default |
