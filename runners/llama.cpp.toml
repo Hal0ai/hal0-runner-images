@@ -18,6 +18,6 @@ repo = "https://github.com/ggml-org/llama.cpp.git"
 #: output_index), #30819/#30929/#30941 (jinja filters and namespaces),
 #: #30785/#30889 (vendored cpp-httplib 0.62.0 and BoringSSL). #28277 adds an
 #: opt-in `--connect` p2p mode; hal0 never passes it.
-version = "b11840"
-ref = "36e36e63a54fc8f85b95e9c499a022b597e478dd"
-ref_description = "release b11840: hexagon: add CEIL op (#31006)"
+version = "b11899"
+ref = "c6fb3b5be2209f6c12339833198190f6f6829581"
+ref_description = "release b11899: mtmd: add mtmd_helper_get_capabilities (#31183)"
