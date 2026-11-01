@@ -11,8 +11,9 @@ No network, no container runtime. Checks:
   * every runners/<key>/manifest.toml passes scripts/runner.py's validation
     and carries [verification] and [lifecycle] (with a release-aware track);
   * every runner has a gates/<key>.toml that scripts/gate.py accepts (the
-    hardware gate; external runners such as cuda have none), and no gate file
-    names a runner that does not exist;
+    hardware gate); an external entry (recipe null) has one only when hal0 offers
+    it to operators (halogen; cuda has none), and no gate file names anything
+    else;
   * every Containerfile takes its base images from manifest build args pinned
     by digest, declares no pin defaults of its own, and clones no branch;
   * Python dependency files pin exact versions;
@@ -39,7 +40,7 @@ import runner  # noqa: E402
 from retention import parse_allowlist_ref  # noqa: E402
 
 #: Mirror of hal0 src/hal0/runners/__init__.py RuntimeFamily.
-FAMILIES = {"llama-server", "flm", "kokoro", "qwen3tts", "moonshine", "comfyui"}
+FAMILIES = {"llama-server", "flm", "kokoro", "qwen3tts", "moonshine", "comfyui", "halogen"}
 BACKENDS = {"rocm", "vulkan", "cpu", "npu", "cuda"}
 TIERS = {"default", "optional"}
 ENTRY_FIELDS = ["id", "title", "summary", "image", "tag", "digest", "candidate", "gate_report",
@@ -206,9 +207,28 @@ def test_gates() -> None:
         # The same validator the gate runs before it starts.
         for p in gate.validate_gate(doc, runner.load(key)["runner"]["backends"]):
             failures.append(f"gates/{key}.toml: {p}")
+    # An external entry (recipe null) has no manifest; scripts/gate.py takes its identity from
+    # the catalogue row, so its gate file is checked against the row's backends.
+    external = {e["id"]: e for e in catalogue()["runners"] if e["recipe"] is None}
+    for key, entry in external.items():
+        path = ROOT / "gates" / f"{key}.toml"
+        if not path.is_file():
+            continue  # cuda: the CUDA lane is hidden in hal0, so nothing gates it
+        check(entry["tag"] is not None, f"images.json[{key}]: an external entry with a gate file needs a tag to gate")
+        try:
+            doc = tomllib.loads(path.read_text())
+        except tomllib.TOMLDecodeError as e:
+            failures.append(f"gates/{key}.toml: {e}")
+            continue
+        for p in gate.validate_gate(doc, entry["backends"]):
+            failures.append(f"gates/{key}.toml: {p}")
+        try:
+            gate.load_plan(key)  # what `scripts/gate.py <key>` loads
+        except SystemExit as e:
+            failures.append(f"gates/{key}.toml: scripts/gate.py cannot load it: {e}")
     for path in sorted((ROOT / "gates").glob("*")):
-        check(path.suffix == ".toml" and path.stem in keys,
-              f"gates/{path.name}: not a gate for a runner built here (external runners such as cuda have none)")
+        check(path.suffix == ".toml" and (path.stem in keys or path.stem in external),
+              f"gates/{path.name}: not a gate for a runner built here or an external catalogue entry")
 
 
 def containerfile_args(text: str) -> tuple[dict[str, str | None], list[str]]:

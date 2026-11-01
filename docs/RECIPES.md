@@ -38,8 +38,17 @@ runs (docs/UPDATING.md section 4). `scripts/gate.py` reads that file, and the
 manifest only for the image's identity (package, version, source ref);
 `scripts/test_repo_consistency.py` requires the file and validates it with the
 gate's own checker. It lives outside `runners/<key>/` on purpose: a probe
-change does not change the image tag and rebuilds nothing. External runners
-(`cuda`) have no gate file. Every probe, session and check has a `name` (lowercase, unique in the
+change does not change the image tag and rebuilds nothing.
+
+An external entry (`recipe: null` in `images.json`) has a gate file only when
+hal0 offers it to operators: `halogen` has one, `cuda` has none because its
+lane is hidden in hal0. It has no manifest, so `scripts/gate.py` takes its
+identity from the catalogue row: the image is the row's `image`, `{version}` is
+its `tag` (the upstream's own tag, such as `0.18.22`, which `--tag` can replace
+to gate a newer one) and `{ref7}` is empty. The image carries none of hal0's
+labels, so the gate checks only that the registry still holds the tag at the
+digest. The flags the lane needs (`--ipc=host`, `--ulimit memlock=-1:-1`) go in
+the lane's `podman_args`. Every probe, session and check has a `name` (lowercase, unique in the
 runner) and a `doc` saying what it proves.
 
 ```toml
@@ -59,6 +68,8 @@ args = ["-m", "{garbage}"]
 lane_args = true                          # also append the lane's server_args
 exit = 64                                 # default 0
 expect = ["translating to exit 64"]       # regexes the output must match; reject = must not
+env = { NAME = "{path:key}/file" }        # container environment; values take the placeholders below
+informational = true                      # recorded in the report, never gating
 
 [[session]]                  # one server, several checks against it
 name = "lfm"
@@ -84,8 +95,10 @@ Session keys: `entrypoint`, `health` (default `/health`), `ready` (JSON fields
 `/health` must have before the checks run, e.g. `{ model_loaded = true }`),
 `startup_timeout` (seconds, default 900), `mounts` and `cache` (`{ key, target }`;
 a `cache` is writable and a fresh empty directory when the key is not
-configured), `env`, and `informational = true` for a session whose results are
-recorded but do not gate (also per check).
+configured), `env` (a table of variable names to values; values take the same
+placeholders as `args`, and a `{path:<key>}` in one is mounted, as in `args`), and
+`informational = true` for a session whose results are recorded but do not gate
+(also per check). An `exec` probe takes `env` and `informational` too.
 
 Check kinds: `http-json` (status and JSON fields; `no_port_arg` shows the
 default port), `completion` and `chat` (temp-0 answer contains `expect`),

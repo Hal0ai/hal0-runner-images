@@ -20,6 +20,7 @@ One name per runner, used everywhere: the hal0 runner key, the catalogue
 | `comfyui` | ComfyUI | image and video generation on the GPU (ROCm) | Comfy-Org/ComfyUI `0.28.0` (commit `c9602625`) | default |
 | `qwen3tts` | Qwen3 TTS | multilingual text-to-speech on the GPU (ROCm) | qwen-tts `0.1.1` | optional |
 | `cuda` | NVIDIA CUDA | llama.cpp on NVIDIA GPUs | ggml-org's own image `server-cuda-b11541` (not built here) | optional |
+| `halogen` | halogen (Flash-Next) | Peonist's engine for Qwen3.8-Flash-Next on Strix Halo (ROCm) | Peonist's own image `halogen-flash-server` `0.18.22` (not built here) | optional |
 
 `standard` is the default for AMD GPUs: unmodified upstream llama.cpp at a
 tagged release with one small patch, ROCm 10.0 and Vulkan (RADV) in one
