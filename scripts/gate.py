@@ -5,7 +5,9 @@ Run it on the Strix Halo box, never in CI. It pulls `image@digest`, runs the
 probes of `gates/<key>.toml` against it and writes a `hal0.gate-report.v1`
 document that `ci/promote.py` accepts. The probes live outside runners/<key>/
 so that changing one never changes an image tag; the manifest is read only for
-the image's identity (package, version, source ref):
+the image's identity (package, version, source ref). An external image, one
+images.json lists with `recipe: null` (halogen), has no manifest: its identity
+is its catalogue row, and it is gated the same way once it has a gates/<key>.toml:
 
     python3 scripts/gate.py standard --digest sha256:<64 hex> [--tag b11552-r1a2b3c]
             [--models gate-models.toml] [--models-dir DIR] [--out report.json]
@@ -116,7 +118,7 @@ class Fail(Exception):
 LANE_FIELDS = {"devices", "server_args", "podman_args"}
 PROBE_FIELDS = {
     "exec": {"args", "entrypoint", "expect", "reject", "exit", "lane_args", "no_devices", "timeout",
-             "mem_gib"},
+             "mem_gib", "env", "informational"},
     "perplexity": {"model", "text", "compare", "ctx", "chunks", "max_diff_pct", "entrypoint", "timeout"},
     "elsewhere": set(),
 }
@@ -175,6 +177,20 @@ def _strs(v: Any) -> bool:
 
 
 GATE_KEYS = {"boxes", "lanes", "probe", "session"}
+ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def env_problems(where: str, env: Any) -> list[str]:
+    """Problems with an `env` table (probe or session): names and string values, which take the path placeholders."""
+    if not isinstance(env, dict):
+        return [f"{where}: env must be a table of NAME = \"value\""]
+    out = []
+    for k, v in env.items():
+        if not ENV_NAME.match(k):
+            out.append(f"{where}: env name {k!r} is not a variable name")
+        if not isinstance(v, str):
+            out.append(f"{where}: env value of {k!r} must be a string")
+    return out
 
 
 def validate_gate(ver: dict, backends: list[str]) -> list[str]:
@@ -252,6 +268,10 @@ def validate_gate(ver: dict, backends: list[str]) -> list[str]:
             regexes_ok(f"{where} reject", p.get("reject"))
             if not isinstance(p.get("exit", 0), int):
                 out.append(f"{where}: exit must be an integer")
+            if "env" in p:
+                out += env_problems(where, p["env"])
+            if not isinstance(p.get("informational", False), bool):
+                out.append(f"{where}: informational must be true or false")
         if kind == "perplexity":
             for f in ("model", "text"):
                 if not isinstance(p.get(f), str):
@@ -274,6 +294,8 @@ def validate_gate(ver: dict, backends: list[str]) -> list[str]:
             out.append(f"{where}: port (the server's port in the container) must be an integer")
         if "lanes" in s and (not _strs(s["lanes"]) or not set(s["lanes"]) <= set(lanes)):
             out.append(f"{where}: lanes must be a subset of {sorted(lanes)}")
+        if "env" in s:
+            out += env_problems(where, s["env"])
         for m in s.get("mounts", []) + s.get("cache", []):
             if not isinstance(m, dict) or not isinstance(m.get("key"), str) or not str(m.get("target", "")).startswith("/"):
                 out.append(f"{where}: mounts and cache entries are {{ key = ..., target = \"/abs\" }}")
@@ -321,9 +343,29 @@ def read_gate(key: str) -> dict:
         raise GateError(f"gates/{key}.toml: {e}")
 
 
+def external_entry(key: str) -> dict | None:
+    """The images.json entry for `key` when it is an external image (recipe null: pinned here, built elsewhere)."""
+    doc = json.loads((ROOT / promote.CATALOGUE_FILE).read_text())
+    return next((e for e in promote.catalogue_entries(doc) if e.get("id") == key and e.get("recipe") is None), None)
+
+
 def load_plan(key: str) -> tuple[dict, dict]:
-    """(the runner's manifest, for the image's identity; its gates/<key>.toml)."""
-    doc = runner.load(key)
+    """(the runner's identity, as a manifest-shaped dict; its gates/<key>.toml).
+
+    A built runner's identity is its manifest. An external image has no
+    manifest, so it is its images.json row: the image is the row's `image`, the
+    version its `tag`, and there is no source ref. The lane flags it needs come
+    from the gate file's lane table, as for every runner."""
+    if key in runner.keys():
+        doc = runner.load(key)
+    else:
+        entry = external_entry(key)
+        if entry is None:
+            raise GateError(f"unknown runner {key!r}: no runners/{key}/manifest.toml and no external entry in images.json")
+        if not entry.get("tag"):
+            raise GateError(f"external runner {key!r} has no tag in images.json to gate")
+        doc = {"runner": {"key": key, "backends": entry["backends"]}, "external": True,
+               "image": {"package": entry["image"], "version": entry["tag"]}, "source": {"ref": ""}}
     ver = read_gate(key)
     problems = validate_gate(ver, doc["runner"]["backends"])
     if problems:
@@ -1299,6 +1341,9 @@ class Gate:
                  headroom_gib: float = DEFAULT_HEADROOM_GIB, plan_only: bool = False) -> None:
         self.key, self.digest, self.tag = key, digest, tag
         self.doc, self.ver = load_plan(key)
+        self.external = bool(self.doc.get("external"))
+        if self.external and tag:
+            self.doc["image"]["version"] = tag  # gating a newer upstream tag than the catalogue's
         self.image = self.doc["image"]["package"]
         self.ref = f"{self.image}@{digest}"
         self.models, self.host = models, host
@@ -1332,6 +1377,10 @@ class Gate:
                 return GARBAGE_TARGET
             raise Fail(f"unknown placeholder {kind}")
         return resolve
+
+    def render_env(self, env: dict[str, str]) -> dict[str, str]:
+        """An `env` table with its placeholders filled in (the mounts come from mounts_for)."""
+        return {k: render(v, self.resolver(set())) for k, v in env.items()}
 
     def host_path(self, key: str) -> str:
         if self.plan_only:
@@ -1428,28 +1477,39 @@ class Gate:
         cp = self.podman_cmd("pull", self.ref, timeout=7200)
         if cp.returncode != 0:
             raise GateError(f"podman pull {self.ref} failed: {clip(cp.stdout, 300)}")
-        cp = self.podman_cmd("image", "inspect", "--format", "{{json .Labels}}", self.ref)
-        try:
-            labels = json.loads(cp.stdout) or {}
-        except ValueError:
-            raise GateError(f"cannot read the labels of {self.ref}: {clip(cp.stdout)}")
         problems = []
-        if labels.get(KEY_LABEL) != self.key:
-            problems.append(f"label {KEY_LABEL}={labels.get(KEY_LABEL)!r}, not {self.key!r}")
-        label_tag = labels.get(TAG_LABEL, "")
-        if self.tag and label_tag != self.tag:
-            problems.append(f"label {TAG_LABEL}={label_tag!r}, not the tag given ({self.tag})")
-        self.tag = self.tag or label_tag
-        if not promote.lib.TAG_RE.match(self.tag or ""):
-            problems.append(f"{self.tag!r} is not an immutable <version>-r<sha7> tag")
+        if self.external:
+            # Built elsewhere: no hal0 labels, and the tag is the upstream's own (the catalogue row's,
+            # or the one given for a newer upstream version), not an immutable <version>-r<sha7>.
+            self.tag = self.tag or str(self.doc["image"]["version"])
+            tag_ok = promote.TAG_CHARS.match(self.tag) is not None
+            if not tag_ok:
+                problems.append(f"{self.tag!r} is not a registry tag")
+            checked = "external image, no hal0 labels to check"
         else:
+            cp = self.podman_cmd("image", "inspect", "--format", "{{json .Labels}}", self.ref)
+            try:
+                labels = json.loads(cp.stdout) or {}
+            except ValueError:
+                raise GateError(f"cannot read the labels of {self.ref}: {clip(cp.stdout)}")
+            if labels.get(KEY_LABEL) != self.key:
+                problems.append(f"label {KEY_LABEL}={labels.get(KEY_LABEL)!r}, not {self.key!r}")
+            label_tag = labels.get(TAG_LABEL, "")
+            if self.tag and label_tag != self.tag:
+                problems.append(f"label {TAG_LABEL}={label_tag!r}, not the tag given ({self.tag})")
+            self.tag = self.tag or label_tag
+            tag_ok = promote.lib.TAG_RE.match(self.tag or "") is not None
+            if not tag_ok:
+                problems.append(f"{self.tag!r} is not an immutable <version>-r<sha7> tag")
+            checked = "labels match"
+        if tag_ok:
             try:
                 now = registry_digest(self.image, self.tag)
             except (urllib.error.URLError, OSError, KeyError, ValueError) as e:
                 raise GateError(f"cannot ask the registry what {self.image}:{self.tag} points at: {e}")
             if now != self.digest:
                 problems.append(f"{self.image}:{self.tag} now points at {now}, not {self.digest}")
-        detail = "; ".join(problems) or f"{self.image}:{self.tag} resolves to {self.digest}; labels match"
+        detail = "; ".join(problems) or f"{self.image}:{self.tag} resolves to {self.digest}; {checked}"
         return Result("image", None, "failed" if problems else "passed", detail)
 
     # ---- probes -----------------------------------------------------------
@@ -1463,7 +1523,8 @@ class Gate:
             args += spec.get("server_args", [])
         garbage: set = set()
         rendered = [render(a, self.resolver(garbage)) for a in args]
-        mounts = self.mounts_for(args, [], bool(garbage))
+        env = p.get("env") or {}
+        mounts = self.mounts_for(args + list(env.values()), [], bool(garbage))
         devices: list[str] = []
         if lane and not p.get("no_devices"):
             devices = self.lane_devices(spec)
@@ -1471,7 +1532,8 @@ class Gate:
         argv = podman_run_argv(podman=self.host.podman_bin, name=name, image=self.ref, args=rendered,
                                entrypoint=entrypoint or p.get("entrypoint"), devices=devices,
                                groups=self.host.groups() if devices else [],
-                               podman_args=spec.get("podman_args", []) if lane else [], mounts=mounts)
+                               podman_args=spec.get("podman_args", []) if lane else [], mounts=mounts,
+                               env=self.render_env(env))
         if self.plan_only:
             print("    " + " ".join(argv))
             return ""
@@ -1533,13 +1595,14 @@ class Gate:
             print(f"  probe {p['name']} ({kind})" + (f" [{lane}]" if lane else ""))
         if kind == "elsewhere":
             return Result(p["name"], lane, "skipped", f"not run by gate.py: {p['doc']}", informational=True)
+        info = bool(p.get("informational"))  # recorded in the report, never gating
         try:
             detail = self.probe_perplexity(p) if kind == "perplexity" else self.probe_exec(p, lane)
-            return Result(p["name"], lane, "passed", detail)
+            return Result(p["name"], lane, "passed", detail, info)
         except Skip as e:
-            return Result(p["name"], lane, "skipped", f"skipped: {e}")
+            return Result(p["name"], lane, "skipped", f"skipped: {e}", info)
         except Fail as e:
-            return Result(p["name"], lane, "failed", str(e))
+            return Result(p["name"], lane, "failed", str(e), info)
 
     # ---- sessions ---------------------------------------------------------
 
@@ -1558,7 +1621,8 @@ class Gate:
         try:
             args = list(s.get("args", [])) + spec.get("server_args", [])
             rendered = [render(a, self.resolver(set())) for a in args]
-            mounts = self.mounts_for(args, s.get("mounts", []), False)
+            env = s.get("env") or {}
+            mounts = self.mounts_for(args + list(env.values()), s.get("mounts", []), False)
             for c in s.get("cache", []):
                 if c["key"] in self.models.entries:
                     mounts.append((self.host_path(c["key"]), c["target"], False))
@@ -1577,7 +1641,7 @@ class Gate:
                                    entrypoint=s.get("entrypoint"), devices=devices,
                                    groups=self.host.groups() if devices else [],
                                    podman_args=spec.get("podman_args", []), mounts=mounts,
-                                   env=s.get("env"), publish=(hostport or port, port), detach=True)
+                                   env=self.render_env(env), publish=(hostport or port, port), detach=True)
             if self.plan_only:
                 print("    " + " ".join(argv))
                 return all_checks("skipped", "plan only")
@@ -2045,8 +2109,10 @@ def main(argv: list[str] | None = None, host: Host | None = None,
     if bool(args.key) == bool(args.group):
         raise GateError("name one runner key or --group")
     keys = group_keys(args.group) if args.group else [args.key]
-    if args.key and args.key not in runner.keys():
+    if args.key and args.key not in runner.keys() and external_entry(args.key) is None:
         raise GateError(f"unknown runner {args.key!r}")
+    for k in keys:
+        load_plan(k)  # an external image without a gate file (cuda) is refused here, before any lock or pull
     digests = parse_pairs(args.digest, keys, "digest", required=not args.plan)
     for k, d in digests.items():
         if not DIGEST_RE.match(d):
@@ -2055,9 +2121,11 @@ def main(argv: list[str] | None = None, host: Host | None = None,
     models = Models.load(args.models, args.models_dir)
     if args.plan:
         for k in keys:
-            print(f"runner {k}: {runner.load(k)['image']['package']}@{digests.get(k, '<digest>')}")
-            Gate(k, digests.get(k, "sha256:<digest>"), tags.get(k), models, host or Host(args.podman, False),
-                 args.headroom_gib, plan_only=True).run()
+            g = Gate(k, digests.get(k, "sha256:<digest>"), tags.get(k), models, host or Host(args.podman, False),
+                     args.headroom_gib, plan_only=True)
+            print(f"runner {k}: {g.image}@{digests.get(k, '<digest>')}"
+                  + (f" (external image, tag {tags.get(k) or g.doc['image']['version']})" if g.external else ""))
+            g.run()
         return 0
 
     problems = tree_check()

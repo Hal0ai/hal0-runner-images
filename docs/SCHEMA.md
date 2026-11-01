@@ -46,9 +46,9 @@ exactly these fields, in this order:
 | `gate_report` | string or null | https URL of the hardware gate report for `digest`. `null` until gated. |
 | `lanes_gated` | list of strings | The `backends` that passed the gate for `digest`, e.g. `["rocm", "vulkan"]`. `[]` until gated. hal0 admits a runner to a lane (for example Vulkan) only when the lane is listed here. |
 | `backends` | list of strings | What the runner can execute: any of `rocm`, `vulkan`, `cpu`, `npu`, `cuda`. |
-| `family` | string | The runtime the image serves, hal0's `RuntimeFamily`: `llama-server`, `flm`, `kokoro`, `moonshine`, `qwen3tts` or `comfyui`. |
+| `family` | string | The runtime the image serves, hal0's `RuntimeFamily`: `llama-server`, `flm`, `kokoro`, `moonshine`, `qwen3tts`, `comfyui` or `halogen`. |
 | `tier` | string | `default` (installed and offered by default) or `optional` (opt-in). |
-| `recipe` | string or null | `runners/<id>` for an image built here. `null` marks an **external** image hal0 pins but this repo does not build (today only `cuda`, ggml-org's official `server-cuda` image). |
+| `recipe` | string or null | `runners/<id>` for an image built here. `null` marks an **external** image hal0 pins but this repo does not build (today `cuda`, ggml-org's official `server-cuda` image, and `halogen`, Peonist's `halogen-flash-server` image). |
 | `maintainer_notes` | string | Notes for people maintaining the image. hal0 does not show them. |
 
 ## Rules
@@ -69,6 +69,14 @@ exactly these fields, in this order:
   and digest are set without a hardware gate, because the CUDA lane is hidden
   in hal0; `lanes_gated` stays `[]`.
 - An external entry cannot use a `hal0-runner-` image name.
+- `halogen` is the second external entry: Peonist's closed-source
+  `ghcr.io/peonist-ai/halogen-flash-server`, pinned by the upstream tag
+  (`0.18.22`, not `<version>-r<sha7>`) and the digest of that tag. Unlike
+  `cuda`, operators are offered it, so it has a hardware gate,
+  `gates/halogen.toml`, and `scripts/gate.py` takes its image, tag and
+  digest from this row because there is no manifest. `lanes_gated` stays
+  `[]` and `gate_report` `null` until a gate run on the Strix Halo box
+  passes.
 - No other fields. Prose goes in `maintainer_notes` or the recipe's manifest.
 
 ## Changes from v1

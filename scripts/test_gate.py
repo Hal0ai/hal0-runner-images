@@ -8,6 +8,7 @@ validator, so the gate and promote cannot drift apart.
 
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import math
@@ -755,6 +756,203 @@ class GateRunTests(unittest.TestCase):
                         os.environ.pop(k, None)
                     else:
                         os.environ[k] = v
+
+
+class ExternalGateTests(unittest.TestCase):
+    """An external image (images.json entry with recipe null) that has a gate file: halogen.
+    Its identity comes from the catalogue row, not from a manifest."""
+
+    CKPT = "/gate/models/halogen-ht43/qwen38-flash-next-ht43.hgn"
+    IMAGE = "ghcr.io/peonist-ai/halogen-flash-server"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name) / "halogen"
+        (self.dir / "tokenizer").mkdir(parents=True)
+        (self.dir / "qwen38-flash-next-ht43.hgn").write_bytes(b"HGN1")
+        self.models = gate.Models({"halogen-ht43": {"path": str(self.dir)}}, str(Path(self.tmp.name) / "g.toml"))
+        self.real_registry = gate.registry_digest
+        self.asked = []
+        gate.registry_digest = lambda image, tag: (self.asked.append((image, tag)), D1)[1]
+
+    def tearDown(self):
+        gate.registry_digest = self.real_registry
+        self.tmp.cleanup()
+
+    def chat(self, body):
+        if "tools" in body:
+            return 200, {"choices": [{"message": {"tool_calls": [
+                {"function": {"name": "get_weather", "arguments": '{"city": "Paris"}'}}]}}]}
+        if "response_format" in body:
+            return 200, {"choices": [{"message": {"content": '{"city": "Paris", "country": "France"}'}}]}
+        return 200, {"choices": [{"message": {"content": "Paris"}}]}
+
+    def halogen_host(self, health=None, **kw):
+        http = FakeHttp({("GET", "/health"): lambda b: (200, health or {"capability_probe": "ok"}),
+                         ("POST", "/v1/chat/completions"): self.chat})
+        kw.setdefault("memory", (128 * GIB,))
+        kw.setdefault("logs", "[halogen] host memory left for everything else: 21.4 GiB\n")
+        return FakeHost(http, {}, **kw)  # the upstream image carries none of hal0's labels
+
+    def run_gate(self, host, tag=None):
+        g = gate.Gate("halogen", D1, tag, self.models, host)
+        results = g.run()
+        return g, gate.build_report(key="halogen", image=g.image, digest=D1, tag=g.tag, results=results,
+                                    lanes=list(g.ver["lanes"]), allow_skip=[], date="d",
+                                    models=list(g.used_models.values()), revision="r")
+
+    def test_the_plan_comes_from_the_catalogue_row_and_the_gate_file(self):
+        doc, ver = gate.load_plan("halogen")
+        self.assertEqual(doc["image"], {"package": self.IMAGE, "version": "0.18.22"})
+        self.assertEqual(doc["source"], {"ref": ""})
+        self.assertEqual(doc["runner"]["backends"], ["rocm"])
+        self.assertEqual(gate.validate_gate(ver, doc["runner"]["backends"]), [])
+        self.assertEqual(list(ver["lanes"]), ["rocm"])
+        self.assertIn("--ipc=host", ver["lanes"]["rocm"]["podman_args"])
+
+    def test_an_external_entry_without_a_gate_file_and_an_unknown_key_are_refused(self):
+        with self.assertRaises(gate.GateError) as cm:
+            gate.load_plan("cuda")  # external too, but hidden in hal0 and never hardware-gated
+        self.assertIn("no gates/cuda.toml", cm.exception.msg)
+        with self.assertRaises(gate.GateError) as cm:
+            gate.load_plan("nonesuch")
+        self.assertIn("unknown runner", cm.exception.msg)
+        with self.assertRaises(gate.GateError):
+            gate.main(["nonesuch", "--plan"], host=self.halogen_host(), tree_check=lambda: [])
+        with self.assertRaises(gate.GateError) as cm:  # refused before any lock, pull or container
+            host = self.halogen_host()
+            gate.main(["cuda", "--digest", D1], host=host, tree_check=lambda: [])
+        self.assertIn("no gates/cuda.toml", cm.exception.msg)
+        self.assertEqual(host.calls, [])
+
+    def test_env_and_informational_are_checked(self):
+        doc, ver = gate.load_plan("halogen")
+        ver["session"][0]["env"] = {"1BAD": "x", "OK": 3}
+        ver["probe"][0]["env"] = ["HALOGEN_X=1"]
+        ver["probe"][0]["informational"] = "yes"
+        problems = "\n".join(gate.validate_gate(ver, doc["runner"]["backends"]))
+        for want in ("env name '1BAD'", "env value of 'OK' must be a string", "env must be a table",
+                     "informational must be true or false"):
+            self.assertIn(want, problems)
+        _, cpu = gate.load_plan("cpu")
+        cpu["probe"][0]["informational"] = True  # a built runner's probe can be informational too
+        self.assertEqual(gate.validate_gate(cpu, ["cpu"]), [])
+
+    def test_plan_prints_the_probes_and_podman_commands_and_runs_nothing(self):
+        host = self.halogen_host()
+        toml = Path(self.tmp.name) / "gate-models.toml"
+        toml.write_text(f'[models]\nhalogen-ht43 = "{self.dir}"\n')
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = gate.main(["halogen", "--digest", D1, "--models", str(toml), "--plan"], host=host,
+                           tree_check=lambda: [])
+        text = out.getvalue()
+        self.assertEqual((rc, host.calls), (0, []))
+        self.assertIn(f"runner halogen: {self.IMAGE}@{D1}", text)
+        for want in ("probe verify (exec) [rocm]", "probe sweep (exec) [rocm]", "session flash [rocm]: checks chat, tool-call",
+                     f"{self.IMAGE}@{D1} verify {self.CKPT}", f"{self.IMAGE}@{D1} sweep -p 8192 -n 128",
+                     f"-v {self.dir}:/gate/models/halogen-ht43:ro", "--ipc=host", "--ulimit memlock=-1:-1",
+                     "--device /dev/kfd --device /dev/dri", "-p 127.0.0.1:8731:8731",
+                     f"-e HALOGEN_CHECKPOINT={self.CKPT}", "-e HALOGEN_KV_POOL_POSITIONS=262144",
+                     "-e HALOGEN_KV_SLOTS=2", "-e HALOGEN_MAX_TOK=16384", "-e HALOGEN_WEIGHTS_LOCK=1",
+                     f"{self.IMAGE}@{D1} all"):
+            self.assertIn(want, text)
+        self.assertNotIn("--entrypoint", text)  # the image's own entrypoint takes the mode as its first argument
+
+    def test_halogen_gate_passes_and_promote_accepts_it_with_the_upstream_tag(self):
+        host = self.halogen_host(exec_out=lambda argv: (0, "verify: 0 bad tensors\n"))
+        g, doc = self.run_gate(host)
+        self.assertTrue(doc["passed"], json.dumps(doc["probes"], indent=1))
+        self.assertEqual(g.tag, "0.18.22")
+        self.assertEqual(doc["tag"], "0.18.22")
+        self.assertEqual(self.asked, [(self.IMAGE, "0.18.22")])  # the registry still holds the tag at the digest
+        self.assertEqual([p["name"] for p in doc["probes"]],
+                         ["image", "rocm/verify", "rocm/chat", "rocm/tool-call", "rocm/structured", "rocm/log"])
+        self.assertEqual([(p["name"], p["status"]) for p in doc["informational"]], [("rocm/sweep", "passed")])
+        self.assertIn("no hal0 labels", doc["probes"][0]["detail"])
+        self.assertTrue(promote_accepts(doc, "halogen", D1))
+        self.assertEqual(promote.validate_gate_report(doc, "halogen", D1)[1], ["rocm"])
+        runs = [c for c in host.calls if c[1] == "run"]
+        self.assertTrue(all(c[3].startswith("gate-halogen-") for c in runs))
+        self.assertEqual(sorted(host.removed), sorted(c[3] for c in runs))
+        verify, sweep, session = runs
+        self.assertEqual(verify[-2:], ["verify", self.CKPT])
+        self.assertEqual(sweep[-5:], ["sweep", "-p", "8192", "-n", "128"])
+        s = " ".join(session)
+        self.assertIn(f"-v {self.dir}:/gate/models/halogen-ht43:ro", s)
+        self.assertIn(f"-e HALOGEN_CHECKPOINT={self.CKPT}", s)  # env is rendered like args, and mounts its model
+        self.assertIn(f"-e HALOGEN_CHECKPOINT={self.CKPT}", " ".join(sweep))
+        self.assertIn("-p 127.0.0.1:40000:8731", s)
+        self.assertIn("--ipc=host", s)
+        self.assertTrue(s.endswith(f"{self.IMAGE}@{D1} all"))
+        self.assertEqual(doc["models"], [{"key": "halogen-ht43", "file": "halogen", "bytes": 3 * GIB}])
+
+    def test_a_tag_given_for_a_new_upstream_version_is_the_one_asked_of_the_registry(self):
+        g, doc = self.run_gate(self.halogen_host(), tag="0.19.0")
+        self.assertEqual(self.asked, [(self.IMAGE, "0.19.0")])
+        self.assertEqual(doc["tag"], "0.19.0")
+        self.assertEqual(g.doc["image"]["version"], "0.19.0")
+        g, doc = self.run_gate(self.halogen_host(), tag="not a tag")
+        self.assertFalse(doc["passed"])
+        self.assertIn("not a registry tag", doc["probes"][0]["detail"])
+
+    def test_a_moved_tag_stops_the_halogen_gate_before_any_container_runs(self):
+        gate.registry_digest = lambda image, tag: D2
+        host = self.halogen_host()
+        _, doc = self.run_gate(host)
+        self.assertFalse(doc["passed"])
+        self.assertEqual([p["name"] for p in doc["probes"]], ["image"])
+        self.assertIn("now points at", doc["probes"][0]["detail"])
+        self.assertFalse([c for c in host.calls if c[1] == "run"])
+
+    def test_a_failing_sweep_is_recorded_but_never_gates(self):
+        host = self.halogen_host(exec_out=lambda argv: (1, "sweep: out of memory\n") if "sweep" in argv else (0, ""))
+        _, doc = self.run_gate(host)
+        self.assertTrue(doc["passed"])
+        self.assertEqual([(p["name"], p["status"]) for p in doc["informational"]], [("rocm/sweep", "failed")])
+        self.assertTrue(promote_accepts(doc, "halogen", D1))
+
+    def test_a_failing_verify_fails_the_gate(self):
+        host = self.halogen_host(exec_out=lambda argv: (1, "verify: tensor 17 is bad\n") if "verify" in argv else (0, ""))
+        _, doc = self.run_gate(host)
+        self.assertFalse(doc["passed"])
+        self.assertEqual([p["name"] for p in doc["probes"] if not p["passed"]], ["rocm/verify"])
+        self.assertFalse(promote_accepts(doc, "halogen", D1))
+
+    def test_a_server_that_never_reports_capability_probe_ok_fails_its_session(self):
+        host = self.halogen_host(health={"capability_probe": "pending"})
+        t = [0.0]
+        host.now = lambda: t[0]
+        host.sleep = lambda s: t.__setitem__(0, t[0] + 100)
+        _, doc = self.run_gate(host)
+        self.assertFalse(doc["passed"])
+        bad = [p for p in doc["probes"] if not p["passed"]]
+        self.assertEqual([p["name"] for p in bad], ["rocm/chat", "rocm/tool-call", "rocm/structured", "rocm/log"])
+        self.assertIn("not ready after 600 s", bad[0]["detail"])
+
+    def test_the_load_is_refused_when_the_box_cannot_spare_the_memory(self):
+        host = self.halogen_host(memory=(60 * GIB,))  # the layout needs about 74 GiB and leaves 8 GiB
+        _, doc = self.run_gate(host)
+        self.assertFalse(doc["passed"])
+        self.assertEqual([p["name"] for p in doc["probes"] if p.get("skipped")],
+                         ["rocm/chat", "rocm/tool-call", "rocm/structured", "rocm/log"])
+        self.assertEqual([(p["name"], p["status"]) for p in doc["informational"]], [("rocm/sweep", "skipped")])
+        self.assertFalse([c for c in host.calls if c[1] == "run" and "-d" in c])  # the server never started
+
+    def test_cli_writes_a_report_named_for_the_upstream_tag(self):
+        host = self.halogen_host()
+        toml = Path(self.tmp.name) / "gate-models.toml"
+        toml.write_text(f'[models]\nhalogen-ht43 = "{self.dir}"\n')
+        out = Path(self.tmp.name) / "r.json"
+        rc = gate.main(["halogen", "--digest", D1, "--models", str(toml), "--out", str(out)], host=host,
+                       tree_check=lambda: [])
+        doc = json.loads(out.read_text())
+        self.assertEqual(rc, 0)
+        self.assertEqual((doc["runner"], doc["tag"], doc["image"]), ("halogen", "0.18.22", self.IMAGE))
+        self.assertNotIn(self.tmp.name, out.read_text())
+        self.assertTrue(promote_accepts(doc, "halogen", D1))
+        self.assertEqual(promote.parse_gate_reports("https://github.com/x/y/releases/download/t/r.json", ["halogen"]),
+                         {"halogen": "https://github.com/x/y/releases/download/t/r.json"})
 
 
 class CheckTests(unittest.TestCase):

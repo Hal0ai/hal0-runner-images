@@ -1,0 +1,99 @@
+# gates/halogen.toml: the hardware gate for the external halogen image (docs/UPDATING.md section 4).
+#
+# scripts/gate.py runs exactly this file against a published image@digest:
+#   python3 scripts/gate.py halogen --digest sha256:<digest>
+# halogen is an external entry of images.json (recipe null): there is no
+# runners/halogen/, so the image, tag and digest come from its catalogue row
+# (ghcr.io/peonist-ai/halogen-flash-server). Format: docs/RECIPES.md,
+# "gates/<key>.toml".
+
+#: Run by scripts/gate.py on the Strix Halo box (gfx1151 only: the image's
+#: entrypoint refuses any other GPU).
+#:
+#: gate-models.toml: halogen-ht43 is the DIRECTORY that holds the ht43
+#: checkpoint with its companions, under the file names the Hugging Face repo
+#: peonist-ai/halogen-qwen3.8-flash-next gives them:
+#:
+#:   qwen38-flash-next-ht43.hgn      the checkpoint (53.7 GiB, resident)
+#:   qwen38-flash-next-ngram.hgn     the lookup table (47.7 GiB, paged, not resident)
+#:   qwen38-flash-next-vision.hgn    the vision tower
+#:   tokenizer/
+#:
+#: The entrypoint finds the lookup table, the vision tower and tokenizer/
+#: beside the checkpoint by name, so they all have to be mounted: the gate
+#: mounts the whole directory read-only (at /gate/models/halogen-ht43) and
+#: names the checkpoint inside it. Because the directory holds the 47.7 GiB
+#: lookup table, which is paged through the file cache and never resident, the
+#: probes give their memory need as mem_gib instead of letting the gate add up
+#: the mounted files.
+boxes = ["the Strix Halo box (kfd present)"]
+
+#: hal0's flags for a halogen container, as hal0 renders them: --ipc=host and
+#: memlock=-1 (HALOGEN_WEIGHTS_LOCK=1 needs it), the Proxmox LXC security
+#: options (scripts/gate.py adds those on every container too).
+[lanes.rocm]
+devices = ["/dev/kfd", "/dev/dri"]
+podman_args = ["--ipc=host", "--ulimit", "memlock=-1:-1", "--security-opt", "apparmor=unconfined", "--security-opt", "seccomp=unconfined"]
+
+#: The image's default entrypoint takes a mode as its first argument (all,
+#: engine, api, bench, sweep, convert, inspect, verify, ppl, niah), so these
+#: probes pass the mode and no `entrypoint`.
+[[probe]]
+name = "verify"
+doc = "the entrypoint's verify mode checks every tensor of the ht43 checkpoint and exits 0"
+kind = "exec"
+args = ["verify", "{path:halogen-ht43}/qwen38-flash-next-ht43.hgn"]
+mem_gib = 4
+timeout = 3600
+
+#: A measurement, not a gate: prefill and decode speed, recorded in the
+#: report's informational list. It loads the checkpoint the way the server
+#: does, from HALOGEN_CHECKPOINT. A failure or a skip here never fails the gate.
+[[probe]]
+name = "sweep"
+doc = "sweep -p 8192 -n 128: prefill and decode speed at an 8,192-token prompt, recorded and never gating"
+kind = "exec"
+informational = true
+args = ["sweep", "-p", "8192", "-n", "128"]
+env = { HALOGEN_CHECKPOINT = "{path:halogen-ht43}/qwen38-flash-next-ht43.hgn" }
+mem_gib = 74
+timeout = 3600
+
+#: hal0's seed layout for a halogen slot (hal0's seed profile): a 262,144
+#: position KV pool, two slots, 16,384 tokens per request, weights locked in
+#: memory. The context stays at the engine's own default of 262,144.
+[[session]]
+name = "flash"
+doc = "halogen-flash-server serving ht43 with hal0's seed layout (pool 262,144, 2 slots, MAX_TOK 16384, weights locked)"
+args = ["all"]
+port = 8731
+health = "/health"
+ready = { capability_probe = "ok" }
+startup_timeout = 600
+mem_gib = 74
+env = { HALOGEN_CHECKPOINT = "{path:halogen-ht43}/qwen38-flash-next-ht43.hgn", HALOGEN_KV_POOL_POSITIONS = "262144", HALOGEN_KV_SLOTS = "2", HALOGEN_MAX_TOK = "16384", HALOGEN_WEIGHTS_LOCK = "1" }
+
+  [[session.check]]
+  name = "chat"
+  doc = "POST /v1/chat/completions at temperature 0 answers 'Paris' (room for the thinking to finish)"
+  kind = "chat"
+  prompt = "What is the capital of France? Answer with one word."
+  expect = "Paris"
+  max_tokens = 4096
+
+  [[session.check]]
+  name = "tool-call"
+  doc = "native tool_calls: the model calls get_weather for Paris"
+  kind = "tool-call"
+
+  [[session.check]]
+  name = "structured"
+  doc = "response_format json_object and json_schema -> 200 with valid JSON"
+  kind = "structured"
+  formats = ["json_object", "json_schema"]
+
+  [[session.check]]
+  name = "log"
+  doc = "the entrypoint reports the host memory it leaves for everything else"
+  kind = "log"
+  expect = ["host memory left for everything else"]

@@ -160,6 +160,24 @@
       "tier": "optional",
       "recipe": null,
       "maintainer_notes": "External: ggml-org's official CUDA server image, not built here. ggml-org does not publish a server-cuda image for every llama.cpp release, so cuda pins the newest server-cuda-b<N> tag with N <= the release in runners/llama.cpp.toml (b11541 for b11552). Not hardware-gated (lanes_gated stays []): the CUDA lane is hidden in hal0 (hal0 #2362)."
+    },
+    {
+      "id": "halogen",
+      "title": "halogen (Flash-Next)",
+      "summary": "Peonist's engine for Qwen3.8-Flash-Next on Strix Halo (ROCm). Opt-in; one model, closed source, takes most of a 128 GB box.",
+      "image": "ghcr.io/peonist-ai/halogen-flash-server",
+      "tag": "0.18.22",
+      "digest": "sha256:273714ccb64dabb7fac0418ee1b6dd83eb57d2fd44cf286eb68a7c694a27c203",
+      "candidate": null,
+      "gate_report": null,
+      "lanes_gated": [],
+      "backends": [
+        "rocm"
+      ],
+      "family": "halogen",
+      "tier": "optional",
+      "recipe": null,
+      "maintainer_notes": "External: Peonist's closed-source halogen-flash-server (EULA v0.1: run and mirror unmodified; no modified redistribution). hal0 pins the upstream digest. gfx1151 only; one model family. Gated with gates/halogen.toml on the Strix Halo box."
     }
   ]
 }

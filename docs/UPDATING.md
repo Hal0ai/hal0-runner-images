@@ -152,7 +152,7 @@ under rootful podman.
 |---|---|
 | `KEY` or `--group NAME` | one runner, or every runner of a shared pin (`llama.cpp` = `standard` + `cpu`) |
 | `--digest` | `sha256:<64 hex>`; in a group `key=sha256:...` once per runner |
-| `--tag` | the immutable tag expected (default: read from the image label) |
+| `--tag` | the immutable tag expected (default: read from the image label). For an external image (halogen) there is no label: the default is the `images.json` tag, and `--tag` names a newer upstream tag to gate |
 | `--models`, `--models-dir` | `gate-models.toml` (default `$HAL0_GATE_MODELS`, then `~/.config/hal0/gate-models.toml`); the base for its relative paths |
 | `--allow-skip PROBE` | a probe, or a glob such as `vulkan/*` or `brain-sft-*`, whose skip does not fail the gate. Repeatable |
 | `--headroom-gib` | the memory floor, default 8 |
@@ -198,6 +198,7 @@ text = "and so my fellow americans ask not what your country can do for you"
 | `kokoro` | `kokoro` |
 | `moonshine` | `moonshine`, `stt-sample` (with `text`) |
 | `qwen3tts` | `qwen3tts`, optional `qwen3tts-cache` |
+| `halogen` | `halogen-ht43`: the directory holding `qwen38-flash-next-ht43.hgn` with `qwen38-flash-next-ngram.hgn`, `qwen38-flash-next-vision.hgn` and `tokenizer/` beside it (the file names of the Hugging Face repo `peonist-ai/halogen-qwen3.8-flash-next`), mounted read-only whole because the entrypoint finds the companions by name |
 | `comfyui` | `sdxl` |
 
 A key that is missing, or whose file does not exist, skips the probes that need
