@@ -94,7 +94,7 @@ RUN mkdir -p build && cd build \
 FROM ${UBUNTU} AS flm-builder
 
 ARG DEBIAN_FRONTEND=noninteractive
-# FastFlowLM release v1.0.10, pinned by commit in manifest.toml.
+# FastFlowLM release v1.0.11, pinned by commit in manifest.toml.
 ARG FLM_REPO
 ARG FLM_REF
 

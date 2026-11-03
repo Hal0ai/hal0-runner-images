@@ -15,15 +15,15 @@ tier = "default"
 
 [image]
 package = "ghcr.io/hal0ai/hal0-runner-flm"
-version = "1.0.10"
+version = "1.0.11"
 
 [source]
 #: FastFlowLM moved from FastFlowLM/FastFlowLM to ROCm/FastFlowLM; GitHub
 #: redirects the old URL.
 repo = "https://github.com/ROCm/FastFlowLM.git"
-#: Release v1.0.10 (2026-10-22, commit e2d0144f).
-ref = "e2d0144fb868018f9777ae661daa0d6163932974"
-release = "v1.0.10"
+#: Release v1.0.11 (2026-10-29, commit f37cdd29).
+ref = "f37cdd29edc777cf3db1e385da8e7bfadc57d0b3"
+release = "v1.0.11"
 
 [build]
 heavy = true
@@ -44,7 +44,7 @@ RUST_VERSION = "1.85.0"
 boxes = ["the Strix Halo box (NPU, amdxdna loaded)"]
 probes = [
     "the build-time `xrt-smi --version` smoke passes (it is part of the Containerfile)",
-    "`flm version` reports v1.0.10",
+    "`flm version` reports v1.0.11",
     "`flm validate` with /dev/accel passed through and memlock unlimited",
     "a hal0 flm slot serves /v1/models and one /v1/chat/completions request",
 ]
