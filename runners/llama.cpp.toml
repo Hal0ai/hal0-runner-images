@@ -8,16 +8,18 @@
 
 [llama_cpp]
 repo = "https://github.com/ggml-org/llama.cpp.git"
-#: Release b11840 (2026-10-23). Picked up since b11716: #30928 (Flint,
-#: FlintForCausalLM), #30927/#30945/#30663 (qwen4exp DFlash layer inputs,
-#: DFlash FC input scale, DFlash2 probabilistic drafts), #27196 (logprobs
-#: with speculative decoding), #30666 (SWA checkpoint invalidation),
-#: #30836 (HIP mmf reduction for tile widths not divisible by 64), #30861
-#: (MoE down projection scaled per expert token). Gate risk items: #30856 and
-#: #28554 (/v1/messages sampling params and slot id), #30863 (Responses SSE
-#: output_index), #30819/#30929/#30941 (jinja filters and namespaces),
-#: #30785/#30889 (vendored cpp-httplib 0.62.0 and BoringSSL). #28277 adds an
-#: opt-in `--connect` p2p mode; hal0 never passes it.
+#: Release b12047 (2026-11-02). Picked up since b11840: HIP gfx11/gfx12 fixes
+#: (#30885 bf16 WMMA operand type, #30915 byte-permute fallback, #31255 conv2d
+#: unroll), Vulkan (#30656 src1 precision, #30106 small matmul tiles, #29882
+#: rms norm via subgroup reductions), #31350 (server spec checkpoint restore
+#: for long drafts), #31087 (no_alloc respected by every memory cache), #31406
+#: (KV rotation with shared-KV layers). Gate risk items: #31153 and #29755
+#: (grammar recursion limit, GRAMMAR_RECURSIVE_LIMIT 256; deep tool schemas),
+#: #31081 (-sm tensor refused for MoE amax-rescaling arches). No flag hal0
+#: passes was removed or renamed in b11840..b12063 (see the PR description).
+#: The grammar patch's context moved in this range (an added #include and the
+#: new GRAMMAR_RECURSIVE_LIMIT line), so the patch was regenerated; it applies
+#: to b12047 and b12063 and not to b11840.
 version = "b12047"
 ref = "5e18eb021b021a133cfa4d9ac84dab644bc24318"
 ref_description = "release b12047: sycl: dmmv code cleanup (#31325)"
