@@ -13,6 +13,9 @@
 #   - runtime devices:  /dev/accel (XDNA 2 NPU), /dev/dri (iGPU helpers)
 #   - runtime ulimits:  --ulimit memlock=-1:-1 (NPU buffer pinning)
 #   - model cache:      ~/.config/flm, bind-mounted by the slot
+#   - healthcheck:      resolves the probed port from $HAL0_PORT, else from
+#                       the running `flm serve --port` argv, else 8086 —
+#                       hal0's Quadlet does not export HAL0_PORT today
 #
 # Host requirements (cannot be met inside the image): the amdxdna kernel
 # driver, NPU firmware >= 1.1.0.0, and /dev/accel/accel0 on the host. The
@@ -94,7 +97,7 @@ RUN mkdir -p build && cd build \
 FROM ${UBUNTU} AS flm-builder
 
 ARG DEBIAN_FRONTEND=noninteractive
-# FastFlowLM release v1.0.11, pinned by commit in manifest.toml.
+# FastFlowLM release v1.0.12, pinned by commit in manifest.toml.
 ARG FLM_REPO
 ARG FLM_REF
 
@@ -197,6 +200,9 @@ COPY --from=flm-builder /opt/fastflowlm /opt/fastflowlm
 # resolves. The Provider also accepts HAL0_FLM_BINARY override.
 RUN ln -sf /opt/fastflowlm/bin/flm /usr/local/bin/flm
 
+COPY healthcheck.sh /usr/local/bin/hal0-flm-healthcheck
+RUN chmod 0755 /usr/local/bin/hal0-flm-healthcheck
+
 ENV LD_LIBRARY_PATH=/opt/xilinx/xrt/lib:/opt/fastflowlm/lib \
     PATH=/opt/xilinx/xrt/bin:/opt/fastflowlm/bin:${PATH} \
     XILINX_XRT=/opt/xilinx/xrt \
@@ -237,7 +243,7 @@ WORKDIR /var/lib/hal0
 EXPOSE 8086
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
-    CMD curl -fsS "http://127.0.0.1:${HAL0_PORT:-8086}/v1/models" || exit 1
+    CMD ["/usr/local/bin/hal0-flm-healthcheck"]
 
 # tini → flm. ContainerSpec.command[] supplies ["serve", <tag>, "--port", ...].
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/flm"]
