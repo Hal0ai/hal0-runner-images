@@ -8,16 +8,28 @@
 
 [llama_cpp]
 repo = "https://github.com/ggml-org/llama.cpp.git"
-#: Release b11840 (2026-10-23). Picked up since b11716: #30928 (Flint,
-#: FlintForCausalLM), #30927/#30945/#30663 (qwen4exp DFlash layer inputs,
-#: DFlash FC input scale, DFlash2 probabilistic drafts), #27196 (logprobs
-#: with speculative decoding), #30666 (SWA checkpoint invalidation),
-#: #30836 (HIP mmf reduction for tile widths not divisible by 64), #30861
-#: (MoE down projection scaled per expert token). Gate risk items: #30856 and
-#: #28554 (/v1/messages sampling params and slot id), #30863 (Responses SSE
-#: output_index), #30819/#30929/#30941 (jinja filters and namespaces),
-#: #30785/#30889 (vendored cpp-httplib 0.62.0 and BoringSSL). #28277 adds an
-#: opt-in `--connect` p2p mode; hal0 never passes it.
-version = "b11840"
-ref = "36e36e63a54fc8f85b95e9c499a022b597e478dd"
-ref_description = "release b11840: hexagon: add CEIL op (#31006)"
+#: Release b12119 (2026-11-04). Picked up since b11840: LFM3 (LiquidAI
+#: LFM3-1.7B / LFM3-VL-2B, #31252, arch lfm3, needs >= b11946), #31374 (end
+#: reasoning-budget forcing on the template's own end tag: fixes LFM3
+#: response_format 500 "Unexpected empty grammar stack", #31328, which the
+#: hal0 #2056 json_object probe would hit), #31598 (LFM3 layer inputs
+#: recorded for spec decoding), #31608 (NVFP4 LFM3 GGUFs), #30141 (spec:
+#: save and restore MTP hidden state), #31350 (server spec checkpoint restore
+#: for long drafts), HIP gfx11/gfx12 fixes (#30885 bf16 WMMA operand type,
+#: #30915 byte-permute fallback, #31255 conv2d unroll), Vulkan (#30656 src1
+#: precision, #30106 small matmul tiles, #29882 rms norm via subgroup
+#: reductions, #30146 small-n split-K on RDNA3/4, #31079 NVFP4 scale lookup
+#: OOB, #31266 skipped-row zeroing), #31087 (no_alloc respected by every
+#: memory cache), #31406 (KV rotation with shared-KV layers). Gate risk
+#: items: #31153 and #29755 (grammar recursion limit,
+#: GRAMMAR_RECURSIVE_LIMIT 256; deep tool schemas), #31081 (-sm tensor
+#: refused for MoE amax-rescaling arches), #31632 (realtime server error
+#: events). No flag hal0 passes was removed or renamed in b11840..b12063
+#: (PR #50 audit); b12063..b12119 adds no flag removal either.
+#: The grammar patch's context moved in this range (an added #include and the
+#: new GRAMMAR_RECURSIVE_LIMIT line), so the patch was regenerated; it applies
+#: to b12047, b12063 and b12119 and not to b11840. MAX_REPETITION_THRESHOLD
+#: is still 2000 upstream at b12119, so drop_when is not met.
+version = "b12119"
+ref = "6f1e6543704bc5b080c7a98e7b6f707b31f6ed51"
+ref_description = "release b12119: server : realtime: send an error event instead of crashing on exceptions (#31632)"
