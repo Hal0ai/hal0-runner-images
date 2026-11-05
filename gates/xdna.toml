@@ -1,0 +1,60 @@
+# gates/xdna.toml: the hardware gate for runners/xdna (docs/UPDATING.md
+# section 4). scripts/gate.py runs exactly this file against a published
+# image@digest:
+#   python3 scripts/gate.py xdna --digest sha256:<digest>
+# It lives outside runners/xdna/ so a probe change never changes the image
+# tag or rebuilds the image. Format: docs/RECIPES.md, "gates/<key>.toml".
+#
+# The xdna-models entry of gate-models.toml maps to the operator's
+# /mnt/ai-models/xdna directory; its `tag` is the pre-pulled file
+# Qwen3.5-0.8B-Q4_K_M-so5.gguf (unsloth UD-Q4_K_XL ssm_out requantized to
+# Q5_K so the fused recurrent layer accepts it — see
+# docs/superpowers/plans/xdna-runner.md).
+
+boxes = ["CT143 (Strix Halo, NPU, amdxdna loaded)"]
+
+[lanes.npu]
+devices = ["/dev/accel/accel0", "/dev/dri"]
+podman_args = ["--ulimit", "memlock=-1:-1"]
+server_args = ["--device", "XDNA0", "-ngl", "99", "-fa", "on", "--poll", "0"]
+
+[[probe]]
+name = "version"
+doc = "llama-server --version reports the build (also the build-time smoke)"
+kind = "exec"
+lanes = []
+args = ["--version"]
+
+[[probe]]
+name = "kernels"
+doc = "the 15 compiled NPU kernel artifacts are present in the image"
+kind = "exec"
+lanes = []
+entrypoint = "/bin/sh"
+args = ["-c", "n=$(ls /opt/xdna/kernels/*.xclbin | wc -l); echo \"kernel count: $n\"; [ \"$n\" -eq 15 ]"]
+
+[[session]]
+name = "xdna-smoke"
+doc = "a hal0 xdna slot: llama-server -m <model> --device XDNA0 -ngl 99 -fa on --poll 0"
+args = ["-m", "{path:xdna-models}", "-c", "4096", "--host", "0.0.0.0", "--port", "8080",
+        "--device", "XDNA0", "-ngl", "99", "-fa", "on", "--poll", "0"]
+port = 8080
+health = "/health"
+ready = { status = "ok" }
+mem_gib = 8
+startup_timeout = 600
+
+  [[session.check]]
+  name = "models"
+  doc = "/v1/models lists the served model"
+  kind = "http-json"
+  path = "/v1/models"
+  nonempty = ["data"]
+
+  [[session.check]]
+  name = "chat"
+  doc = "one /v1/chat/completions request answers (NPU decode path, PGEMM_GLU_A=0)"
+  kind = "chat"
+  model = "{value:xdna-models:tag}"
+  prompt = "What is the capital of France? Answer in one word."
+  expect = "Paris"

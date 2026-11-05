@@ -1,0 +1,71 @@
+# runners/xdna — ggml-xdna (Tether qvac-fabric-llm.cpp) on the AMD XDNA 2 NPU.
+#
+# Builds llama.cpp's ggml-xdna backend (IRON/mlir-aie compiled NPU kernels +
+# XRT 2.25.0) into an Ubuntu 24.04 runtime image. Unlike flm (runners/flm),
+# this is upstream llama-server itself with an NPU ggml backend, so it
+# exposes llama.cpp's own argv/API surface.
+#
+# Build:   python3 scripts/runner.py build xdna   (about 30-45 minutes;
+#          kernel codegen alone is ~10 min with -j16)
+
+[runner]
+key = "xdna"
+title = "NPU (ggml-xdna)"
+summary = "Runs Qwen3.5 gated-delta-net models on the AMD XDNA 2 NPU via ggml-xdna."
+family = "llama-server"
+backends = ["npu"]
+tier = "optional"
+
+[image]
+package = "ghcr.io/hal0ai/hal0-runner-xdna"
+#: Short form of [source].ref (72f6dfa65), Tether's qvac-fabric-llm.cpp
+#: master as synced 2026-11-03.
+version = "72f6dfa"
+
+[source]
+repo = "https://github.com/tetherto/qvac-fabric-llm.cpp"
+#: "Sync master with temp-11739 (#482)", 2026-11-03. Spiked and bisected on
+#: CT105/CT143 (docs/superpowers/plans/xdna-runner.md); do not advance this
+#: pin without re-running the fused-layer correctness bisection.
+ref = "72f6dfa65c04401ea68d9414488e2af8d00545a9"
+
+[build]
+heavy = true
+timeout_minutes = 120
+
+[build.args]
+UBUNTU = "docker.io/library/ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55"
+QVAC_REPO = "https://github.com/tetherto/qvac-fabric-llm.cpp"
+QVAC_REF = "72f6dfa65c04401ea68d9414488e2af8d00545a9"
+#: mlir-aie release used to build the NPU kernels (IRON designs under
+#: ggml/src/ggml-xdna/kernels). Pulled via the -f expanded_assets index below.
+MLIR_AIE_VERSION = "1.4.3"
+#: Must match mlir-aie 1.4.3's own peano pin (utils/peano-requirements.txt).
+#: The llvm-aie nightly (2026102001) overflows fused_layer's program memory
+#: by 16 bytes - confirmed on the spike box; do not float this to "latest".
+LLVM_AIE_VERSION = "22.0.0.2026090701+3e93bf7b"
+#: XRT 2.25.0 from the lemonade-team PPA (ppa:lemonade-team/stable), the
+#: pairing validated end-to-end on CT105/CT143.
+XRT_VERSION = "1:2.25.0-4~noble1"
+
+[verification]
+boxes = ["CT143 (Strix Halo, NPU, amdxdna loaded)"]
+probes = [
+    "the build-time `llama-server --version` smoke passes",
+    "the build-time kernel-manifest smoke: 15 xclbins present, incl. fused_layer*.xclbin",
+    "ldd on every shipped binary resolves (no 'not found')",
+    "a hal0 xdna slot serves /v1/models and one /v1/chat/completions request on XDNA0",
+]
+
+[lifecycle]
+purpose = "Run Qwen3.5 gated-delta-net models on the NPU through upstream llama.cpp's own API/argv surface, as an alternative lane to flm."
+needed_for = ["hal0 npu lane slots that want llama.cpp argv/API instead of FastFlowLM's"]
+retire_when = "When ggml-xdna lands in upstream ggml.org/llama.cpp and flm or the standard runner picks it up directly, or hal0 drops NPU support."
+
+[lifecycle.track]
+#: qvac-fabric-llm.cpp has no GitHub Releases; it tracks commits on master.
+#: scripts/source_watch.py has no "new commit on branch" kind today, so this
+#: pin is advanced by hand after re-running the fused-layer correctness
+#: bisection from docs/superpowers/plans/xdna-runner.md - do not auto-track.
+kind = "github-release"
+pattern = "^NO-RELEASES-TRACK-COMMITS-BY-HAND$"
