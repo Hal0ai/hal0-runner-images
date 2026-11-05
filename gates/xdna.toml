@@ -27,11 +27,11 @@ args = ["--version"]
 
 [[probe]]
 name = "kernels"
-doc = "the 15 compiled NPU kernel artifacts are present in the image"
+doc = "the 16 compiled NPU kernel artifacts are present in the image"
 kind = "exec"
 lanes = []
 entrypoint = "/bin/sh"
-args = ["-c", "n=$(ls /opt/xdna/kernels/*.xclbin | wc -l); echo \"kernel count: $n\"; [ \"$n\" -eq 15 ]"]
+args = ["-c", "n=$(ls /opt/xdna/kernels/*.xclbin | wc -l); echo \"kernel count: $n\"; [ \"$n\" -eq 16 ]"]
 
 [[session]]
 name = "xdna-smoke"

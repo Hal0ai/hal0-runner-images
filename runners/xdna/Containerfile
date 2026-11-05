@@ -107,7 +107,7 @@ RUN cmake -B build -G Ninja \
 
 # Collect the kernel artifacts the backend looks for at
 # GGML_XDNA_KERNEL_DIR (ggml/src/ggml-xdna/README.md "Artifacts"):
-# 15 compiled designs, each an .xclbin + reference .insts.bin.
+# 16 compiled designs, each an .xclbin + reference .insts.bin.
 RUN mkdir -p /opt/xdna/kernels \
     && find build -maxdepth 3 -name '*.xclbin' -exec cp -n {} /opt/xdna/kernels/ \; \
     && find build -maxdepth 3 -name '*.insts.bin' -exec cp -n {} /opt/xdna/kernels/ \; \
@@ -117,7 +117,7 @@ RUN mkdir -p /opt/xdna/kernels \
 # the fused recurrent layer the decode path depends on by default.
 RUN n=$(ls /opt/xdna/kernels/*.xclbin | wc -l); \
     echo "kernel count: $n"; \
-    [ "$n" -eq 15 ] || { echo "expected 15 xclbins, got $n"; ls /opt/xdna/kernels; exit 1; }; \
+    [ "$n" -eq 16 ] || { echo "expected 16 xclbins, got $n"; ls /opt/xdna/kernels; exit 1; }; \
     ls /opt/xdna/kernels/fused_layer*.xclbin >/dev/null
 
 # ─── Stage 2 — runtime ────────────────────────────────────────────────────────
