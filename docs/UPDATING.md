@@ -172,6 +172,7 @@ root = "/srv/models"            # optional; relative paths resolve here (or --mo
 [models]
 "qwen3.8-27b"        = "unsloth/Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-Q4_K_XL.gguf"
 "qwen3.8-27b-mmproj" = "unsloth/Qwen3.8-27B-GGUF/mmproj-F16.gguf"
+"qwen3.8-27b-dflash2" = "z-lab/Qwen3.8-27B-DFlash2/Qwen3.8-27B-DFlash2-Q4_K_M.gguf"
 "lfm2.5-2.6b"        = "LiquidAI/LFM2.5-2.6B-GGUF/LFM2.5-2.6B-Q8_0.gguf"
 "hal0-brain-sft"     = "local/hal0-brain-sft/hal0-brain-sft.gguf"
 "perplexity-text"    = "/srv/gate/wiki.test.raw"    # any plain text, a few hundred KB
@@ -192,7 +193,7 @@ text = "and so my fellow americans ask not what your country can do for you"
 
 | runner | keys |
 |---|---|
-| `standard` | `qwen3.8-27b`, `qwen3.8-27b-mmproj`, `lfm2.5-2.6b`, `hal0-brain-sft`, `perplexity-text` |
+| `standard` | `qwen3.8-27b`, `qwen3.8-27b-mmproj`, `qwen3.8-27b-dflash2`, `lfm2.5-2.6b`, `hal0-brain-sft`, `perplexity-text` |
 | `cpu` | `lfm2.5-2.6b` |
 | `flm` | `flm-models` (with `tag`) |
 | `kokoro` | `kokoro` |
