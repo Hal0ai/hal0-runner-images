@@ -149,11 +149,12 @@ COPY --from=builder /src/build/bin/llama-server   /opt/xdna/bin/llama-server
 COPY --from=builder /src/build/bin/llama-bench    /opt/xdna/bin/llama-bench
 COPY --from=builder /src/build/bin/llama-quantize /opt/xdna/bin/llama-quantize
 COPY --from=builder /src/build/bin/llama-cli      /opt/xdna/bin/llama-cli
-# Shared libggml*/libllama*.so land next to the binaries in llama.cpp's own
-# build tree layout (lib*/ and bin/ both carry them depending on backend
-# config) — glob both to be safe, de-duping with cp -n.
-RUN true
+# Shared libggml*/libllama*/libmtmd*.so land next to the binaries in
+# llama.cpp's own build tree layout, including the per-tool lib*-impl.so
+# shims (e.g. libllama-server-impl.so) that llama-server dlopens at start.
 COPY --from=builder /src/build/bin/libggml*.so*   /opt/xdna/lib/
+COPY --from=builder /src/build/bin/libllama*.so*  /opt/xdna/lib/
+COPY --from=builder /src/build/bin/libmtmd*.so*   /opt/xdna/lib/
 COPY --from=builder /opt/xdna/kernels             /opt/xdna/kernels
 
 RUN ln -sf /opt/xdna/bin/llama-server /usr/local/bin/llama-server
