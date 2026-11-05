@@ -151,8 +151,8 @@
       "tag": "server-cuda-b11804",
       "digest": "sha256:490d8cd8000203a3ab8fdfce14ef931e2aa85affd4dd4447bcc75f299f00fd9a",
       "candidate": {
-        "tag": "server-cuda-b12033",
-        "digest": "sha256:0a9f6c7cfe5a6b90b6c048b7a86865bf55a88af34bada927482eab2ef5f25b4a"
+        "tag": "server-cuda-b12110",
+        "digest": "sha256:a2963b4817f03eea7e0d6065ea576252322792441ef97aaae178b924520547d6"
       },
       "gate_report": null,
       "lanes_gated": [],
