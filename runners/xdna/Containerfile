@@ -77,7 +77,8 @@ COPY requirements.txt /tmp/requirements.txt
 RUN /opt/aie-env/bin/pip install --no-cache-dir -U pip \
     && /opt/aie-env/bin/pip install --no-cache-dir \
         -r /tmp/requirements.txt \
-        -f "https://github.com/Xilinx/mlir-aie/releases/expanded_assets/v${MLIR_AIE_VERSION}"
+        -f "https://github.com/Xilinx/mlir-aie/releases/expanded_assets/v${MLIR_AIE_VERSION}" \
+        -f "https://github.com/Xilinx/llvm-aie/releases/expanded_assets/nightly"
 
 WORKDIR /src
 RUN git clone "${QVAC_REPO}" . \
