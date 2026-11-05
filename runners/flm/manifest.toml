@@ -15,15 +15,15 @@ tier = "default"
 
 [image]
 package = "ghcr.io/hal0ai/hal0-runner-flm"
-version = "1.0.11"
+version = "1.0.12"
 
 [source]
 #: FastFlowLM moved from FastFlowLM/FastFlowLM to ROCm/FastFlowLM; GitHub
 #: redirects the old URL.
 repo = "https://github.com/ROCm/FastFlowLM.git"
-#: Release v1.0.11 (2026-10-29, commit f37cdd29).
-ref = "f37cdd29edc777cf3db1e385da8e7bfadc57d0b3"
-release = "v1.0.11"
+#: Release v1.0.12 (2026-11-05, commit cce7e5bb).
+ref = "cce7e5bb7d56af182b5051c12253175a86957b73"
+release = "v1.0.12"
 
 [build]
 heavy = true
@@ -32,7 +32,7 @@ timeout_minutes = 120
 [build.args]
 UBUNTU = "docker.io/library/ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55"
 FLM_REPO = "https://github.com/ROCm/FastFlowLM.git"
-FLM_REF = "e2d0144fb868018f9777ae661daa0d6163932974"
+FLM_REF = "cce7e5bb7d56af182b5051c12253175a86957b73"
 #: xdna-driver tag 2.21.75 (the Ryzen AI 1.7.1 pairing; its xrt submodule
 #: pins XRT 2.21.75), matching the host libxrt hal0 boxes run.
 XDNA_REPO = "https://github.com/amd/xdna-driver.git"
@@ -44,7 +44,7 @@ RUST_VERSION = "1.85.0"
 boxes = ["the Strix Halo box (NPU, amdxdna loaded)"]
 probes = [
     "the build-time `xrt-smi --version` smoke passes (it is part of the Containerfile)",
-    "`flm version` reports v1.0.11",
+    "`flm version` reports v1.0.12",
     "`flm validate` with /dev/accel passed through and memlock unlimited",
     "a hal0 flm slot serves /v1/models and one /v1/chat/completions request",
 ]
