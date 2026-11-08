@@ -159,7 +159,7 @@
       "family": "llama-server",
       "tier": "optional",
       "recipe": "runners/xdna",
-      "maintainer_notes": "Not yet promoted: built and bench-smoked on CT143 (localhost/hal0-runner-xdna:dev) during the spike, not pushed to ghcr or hardware-gated yet. Upstream llama.cpp fork (tetherto/qvac-fabric-llm.cpp) with an NPU ggml backend; alternative lane to flm with llama.cpp's own argv/API."
+      "maintainer_notes": "Not yet promoted: built and bench-smoked on the Strix Halo box during the spike, not pushed to ghcr or hardware-gated yet. Upstream llama.cpp fork (tetherto/qvac-fabric-llm.cpp) with an NPU ggml backend; alternative lane to flm with llama.cpp's own argv/API."
     },
     {
       "id": "cuda",

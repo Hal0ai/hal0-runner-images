@@ -36,7 +36,7 @@ done
 # Some host XRT builds (e.g. a newer PPA snapshot the box already runs) may
 # need to take priority over the image's own XRT for device compatibility.
 # Unset/empty by default — the image's XRT is what was bisected for
-# correctness (see docs/superpowers/plans/xdna-runner.md).
+# correctness (verified by bisection against the CPU backend).
 if [ -n "${HAL0_XDNA_HOST_XRT:-}" ]; then
     echo "[xdna-entrypoint] HAL0_XDNA_HOST_XRT set: prepending $HAL0_XDNA_HOST_XRT to LD_LIBRARY_PATH"
     export LD_LIBRARY_PATH="${HAL0_XDNA_HOST_XRT}:${LD_LIBRARY_PATH:-}"

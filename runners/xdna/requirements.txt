@@ -1,5 +1,5 @@
 # Exact Python pins for the ggml-xdna kernel build (IRON/mlir-aie codegen).
-# Captured from the working spike venv (/var/lib/hal0/work/xdna-spike/aie-env)
+# Captured from the working spike venv (the spike's aie-env)
 # and mlir-aie's own peano pin at v1.4.3 (utils/peano-requirements.txt).
 #
 # llvm-aie MUST stay at this exact build: the 2026102001 nightly overflows

@@ -5,13 +5,12 @@
 # It lives outside runners/xdna/ so a probe change never changes the image
 # tag or rebuilds the image. Format: docs/RECIPES.md, "gates/<key>.toml".
 #
-# The xdna-models entry of gate-models.toml maps to the operator's
-# /mnt/ai-models/xdna directory; its `tag` is the pre-pulled file
-# Qwen3.5-0.8B-Q4_K_M-so5.gguf (unsloth UD-Q4_K_XL ssm_out requantized to
-# Q5_K so the fused recurrent layer accepts it — see
-# docs/superpowers/plans/xdna-runner.md).
+# The xdna-models entry of gate-models.toml: `path` is the GGUF file to
+# serve, `tag` the model name the chat check sends (its file name). The
+# validated model is Qwen3.5-0.8B-Q4_K_M-so5.gguf (unsloth UD-Q4_K_XL with
+# ssm_out requantized to Q5_K so the fused recurrent layer accepts it).
 
-boxes = ["CT143 (Strix Halo, NPU, amdxdna loaded)"]
+boxes = ["the Strix Halo box (NPU, amdxdna loaded)"]
 
 [lanes.npu]
 devices = ["/dev/accel/accel0", "/dev/dri"]

@@ -22,7 +22,7 @@
 # driver and /dev/accel/accel0. The build itself needs none of them.
 #
 # CORRECTNESS NOTE (do not remove GGML_XDNA_PGEMM_GLU_A=0): the spike
-# bisection (docs/superpowers/plans/xdna-runner.md, xdna_bisect.py) found the
+# bisection against the CPU backend found the
 # fused decode layer's SwiGLU-into-down-proj fast path (PGEMM_GLU_A) produces
 # wrong first-token logits during prefill on this XRT/FW/mlir-aie stack,
 # independent of compiler or weight format. GGML_XDNA_PGEMM_GLU_A=0 is a

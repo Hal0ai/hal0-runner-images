@@ -185,6 +185,10 @@ sdxl                 = "comfyui/checkpoints/sd_xl_base_1.0.safetensors"
 path = "/srv/flm/models"
 tag  = "llama3.2:1b"
 
+[models.xdna-models]              # a GGUF the xdna runner serves on the NPU, and its name
+path = "xdna/Qwen3.5-0.8B-Q4_K_M-so5.gguf"
+tag  = "Qwen3.5-0.8B-Q4_K_M-so5.gguf"
+
 [models.stt-sample]               # 16 kHz mono 16-bit WAV of short English speech, and what it says
 path = "/srv/gate/sample-16k.wav"
 text = "and so my fellow americans ask not what your country can do for you"
@@ -200,6 +204,7 @@ text = "and so my fellow americans ask not what your country can do for you"
 | `qwen3tts` | `qwen3tts`, optional `qwen3tts-cache` |
 | `halogen` | `halogen-ht43`: the directory holding `qwen38-flash-next-ht43.hgn` with `qwen38-flash-next-ngram.hgn`, `qwen38-flash-next-vision.hgn` and `tokenizer/` beside it (the file names of the Hugging Face repo `peonist-ai/halogen-qwen3.8-flash-next`), mounted read-only whole because the entrypoint finds the companions by name |
 | `comfyui` | `sdxl` |
+| `xdna` | `xdna-models` (with `tag`) |
 
 A key that is missing, or whose file does not exist, skips the probes that need
 it. A skip fails the gate unless `--allow-skip` names it.
