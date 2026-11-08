@@ -40,7 +40,9 @@ args = ["-m", "{path:xdna-models}", "-c", "4096", "--host", "0.0.0.0", "--port",
 port = 8080
 health = "/health"
 ready = { status = "ok" }
-mem_gib = 8
+#: A 0.5 GB GGUF at 4k context: well under 2 GiB of host memory. The 8 GiB
+#: copied from flm's gate made the session unrunnable on a small container.
+mem_gib = 2
 startup_timeout = 600
 
   [[session.check]]
