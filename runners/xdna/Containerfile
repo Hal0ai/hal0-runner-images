@@ -1,0 +1,196 @@
+# check=skip=InvalidDefaultArgInFrom
+# hal0-runner-xdna: ggml-xdna (Tether qvac-fabric-llm.cpp) on the AMD XDNA 2
+# NPU (Strix Halo). Upstream llama.cpp with an NPU ggml backend — a second
+# lane to the NPU alongside runners/flm, with llama.cpp's own argv/API.
+#
+# Build it with `python3 scripts/runner.py build xdna`. Every pin (base image
+# digest, source commit, mlir-aie/llvm-aie versions, XRT package version)
+# comes from manifest.toml as --build-arg; the ARGs here have no defaults.
+#
+# Contract with hal0 (src/hal0/providers/xdna.py, slots/argv.py):
+#   - binary path:      /opt/xdna/bin/llama-server, symlinked to
+#                       /usr/local/bin/llama-server
+#   - argv:             --device XDNA0 -ngl 99 -fa on --poll 0, plus -m
+#                       <model>, -c <ctx>, --host/--port from the slot
+#   - endpoints:        /v1/models, /v1/chat/completions (llama.cpp's own)
+#   - runtime devices:  /dev/accel (XDNA 2 NPU), /dev/dri (iGPU helpers)
+#   - runtime ulimits:  --ulimit memlock=-1:-1 (NPU buffer pinning)
+#   - kernel artifacts: GGML_XDNA_KERNEL_DIR=/opt/xdna/kernels (15 .xclbin +
+#                       .insts.bin pairs, see ggml/src/ggml-xdna/README.md)
+#
+# Host requirements (cannot be met inside the image): the amdxdna kernel
+# driver and /dev/accel/accel0. The build itself needs none of them.
+#
+# CORRECTNESS NOTE (do not remove GGML_XDNA_PGEMM_GLU_A=0): the spike
+# bisection against the CPU backend found the
+# fused decode layer's SwiGLU-into-down-proj fast path (PGEMM_GLU_A) produces
+# wrong first-token logits during prefill on this XRT/FW/mlir-aie stack,
+# independent of compiler or weight format. GGML_XDNA_PGEMM_GLU_A=0 is a
+# ~15% pp512 cost, not an optional tuning knob — it is what makes the output
+# correct English instead of garbage-then-Russian.
+
+ARG UBUNTU
+
+# ─── Stage 1 — builder (XRT headers, IRON venv, kernels, llama-server) ───────
+FROM ${UBUNTU} AS builder
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG QVAC_REPO
+ARG QVAC_REF
+ARG MLIR_AIE_VERSION
+ARG LLVM_AIE_VERSION
+ARG XRT_VERSION
+
+# lemonade-team's PPA carries XRT 2.25.0 for Ubuntu 24.04 (noble) — the
+# pairing the spike bisected ggml-xdna correctness against. The PPA's own
+# -dev package pulls Boost/OpenCL/etc. transitively; everything else here is
+# standard build tooling (cmake/ninja/git) plus llama.cpp's own libcurl dep.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        software-properties-common \
+        gnupg \
+    && add-apt-repository -y ppa:lemonade-team/stable \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        cmake \
+        ninja-build \
+        git \
+        python3 \
+        python3-venv \
+        python3-pip \
+        curl \
+        libcurl4-openssl-dev \
+        uuid-dev \
+        libxrt-dev=${XRT_VERSION} \
+        libxrt-utils=${XRT_VERSION} \
+    && rm -rf /var/lib/apt/lists/*
+
+# IRON venv: mlir-aie compiles the NPU kernels (Python designs under
+# ggml/src/ggml-xdna/kernels) into .xclbin/.insts.bin at configure+build
+# time. Both wheels come off mlir-aie's own GitHub Releases index, not PyPI.
+# llvm-aie is pinned to the exact nightly mlir-aie 1.4.3 itself requires
+# (utils/peano-requirements.txt) — see requirements.txt for why this must
+# not float.
+RUN python3 -m venv /opt/aie-env
+COPY requirements.txt /tmp/requirements.txt
+RUN /opt/aie-env/bin/pip install --no-cache-dir -U pip \
+    && /opt/aie-env/bin/pip install --no-cache-dir \
+        -r /tmp/requirements.txt \
+        -f "https://github.com/Xilinx/mlir-aie/releases/expanded_assets/v${MLIR_AIE_VERSION}" \
+        -f "https://github.com/Xilinx/llvm-aie/releases/expanded_assets/nightly"
+
+WORKDIR /src
+RUN git clone "${QVAC_REPO}" . \
+    && git checkout "${QVAC_REF}" \
+    && git submodule update --init --recursive
+
+# -DLLAMA_USE_PREBUILT_UI=OFF: llama-server's tools/ui target otherwise
+# fetches a prebuilt dist.tar.gz from a Hugging Face bucket
+# (scripts/ui-assets.cmake, tools/ui/CMakeLists.txt) which 404s for this
+# fork's release tags (no matching HF bucket asset). This runner serves the
+# OpenAI-compatible API only — no need for the web UI, and LLAMA_BUILD_UI
+# already defaults OFF (no npm build attempted either way).
+#
+# GGML_XDNA_GEMM_PYTHON points mlir-aie's `aiecc.py` codegen at the IRON
+# venv so kernel compilation runs even though the venv isn't activated.
+RUN cmake -B build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DGGML_XDNA=ON \
+        -DGGML_OPENMP=ON \
+        -DGGML_XDNA_BUILD_KERNELS=ON \
+        -DGGML_XDNA_GEMM_PYTHON=/opt/aie-env/bin/python \
+        -DLLAMA_BUILD_SERVER=ON \
+        -DLLAMA_CURL=ON \
+        -DLLAMA_USE_PREBUILT_UI=OFF \
+    && cmake --build build -j"$(nproc)" --target llama-server llama-bench llama-quantize llama-cli
+
+# Collect the kernel artifacts the backend looks for at
+# GGML_XDNA_KERNEL_DIR (ggml/src/ggml-xdna/README.md "Artifacts"):
+# 16 compiled designs, each an .xclbin + reference .insts.bin.
+RUN mkdir -p /opt/xdna/kernels \
+    && find build -maxdepth 3 -name '*.xclbin' -exec cp -n {} /opt/xdna/kernels/ \; \
+    && find build -maxdepth 3 -name '*.insts.bin' -exec cp -n {} /opt/xdna/kernels/ \; \
+    && cd /opt/xdna/kernels && sha256sum *.xclbin *.insts.bin > SHA256SUMS
+
+# Build-time smoke: the kernel manifest must have every design, including
+# the fused recurrent layer the decode path depends on by default.
+RUN n=$(ls /opt/xdna/kernels/*.xclbin | wc -l); \
+    echo "kernel count: $n"; \
+    [ "$n" -eq 16 ] || { echo "expected 16 xclbins, got $n"; ls /opt/xdna/kernels; exit 1; }; \
+    ls /opt/xdna/kernels/fused_layer*.xclbin >/dev/null
+
+# ─── Stage 2 — runtime ────────────────────────────────────────────────────────
+FROM ${UBUNTU} AS runtime
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG XRT_VERSION
+
+# Runtime-only XRT (libxrt2 + libxrt-npu2, no -dev/-utils), from the same
+# PPA/version pin as the builder so the device plugin the kernels were
+# verified against is the one that ships.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        software-properties-common \
+        gnupg \
+    && add-apt-repository -y ppa:lemonade-team/stable \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libxrt2=${XRT_VERSION} \
+        libxrt-npu2=${XRT_VERSION} \
+        libgomp1 \
+        libcurl4 \
+        tini \
+    && apt-get purge -y software-properties-common gnupg \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /opt/xdna/bin /opt/xdna/lib
+COPY --from=builder /src/build/bin/llama-server   /opt/xdna/bin/llama-server
+COPY --from=builder /src/build/bin/llama-bench    /opt/xdna/bin/llama-bench
+COPY --from=builder /src/build/bin/llama-quantize /opt/xdna/bin/llama-quantize
+COPY --from=builder /src/build/bin/llama-cli      /opt/xdna/bin/llama-cli
+# Shared libggml*/libllama*/libmtmd*.so land next to the binaries in
+# llama.cpp's own build tree layout, including the per-tool lib*-impl.so
+# shims (e.g. libllama-server-impl.so) that llama-server dlopens at start.
+COPY --from=builder /src/build/bin/libggml*.so*   /opt/xdna/lib/
+COPY --from=builder /src/build/bin/libllama*.so*  /opt/xdna/lib/
+COPY --from=builder /src/build/bin/libmtmd*.so*   /opt/xdna/lib/
+COPY --from=builder /opt/xdna/kernels             /opt/xdna/kernels
+
+RUN ln -sf /opt/xdna/bin/llama-server /usr/local/bin/llama-server
+
+COPY entrypoint.sh /usr/local/bin/hal0-xdna-entrypoint
+RUN chmod 0755 /usr/local/bin/hal0-xdna-entrypoint
+
+ENV LD_LIBRARY_PATH=/opt/xdna/lib \
+    PATH=/opt/xdna/bin:${PATH} \
+    GGML_XDNA_KERNEL_DIR=/opt/xdna/kernels \
+    GGML_XDNA_PGEMM_GLU_A=0 \
+    OMP_WAIT_POLICY=PASSIVE
+
+# Build-time smoke: the binary links and reports a version.
+RUN /opt/xdna/bin/llama-server --version
+
+# Build-time smoke: every shared library llama-server needs must resolve.
+RUN missing="$(ldd /opt/xdna/bin/llama-server /opt/xdna/lib/*.so* 2>/dev/null | grep 'not found' | sort -u)"; \
+    if [ -n "$missing" ]; then echo "unresolved shared libraries:"; echo "$missing"; exit 1; fi
+
+# UID/GID match host hal0 (as runners/flm), video/render groups for
+# /dev/accel + /dev/dri access via --group-add.
+RUN userdel -r ubuntu 2>/dev/null || true \
+    && groupadd --system --gid 44  video  2>/dev/null || true \
+    && groupadd --system --gid 993 render 2>/dev/null || true \
+    && groupadd --system --gid 1000 hal0 \
+    && useradd  --system --uid 1000 --gid 1000 --shell /usr/sbin/nologin \
+                --home-dir /var/lib/hal0 --create-home hal0 \
+    && usermod -aG video,render hal0 \
+    && mkdir -p /var/lib/hal0/models \
+    && chown -R hal0:hal0 /var/lib/hal0
+
+USER hal0
+WORKDIR /var/lib/hal0
+
+EXPOSE 8080
+
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/hal0-xdna-entrypoint"]
+CMD ["--help"]

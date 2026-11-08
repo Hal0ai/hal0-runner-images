@@ -1,0 +1,14 @@
+# Exact Python pins for the ggml-xdna kernel build (IRON/mlir-aie codegen).
+# Captured from the working spike venv (the spike's aie-env)
+# and mlir-aie's own peano pin at v1.4.3 (utils/peano-requirements.txt).
+#
+# llvm-aie MUST stay at this exact build: the 2026102001 nightly overflows
+# fused_layer's program memory by 16 bytes (confirmed on the spike box).
+# mlir-aie and llvm-aie are not on PyPI and live on DIFFERENT release pages:
+# mlir_aie comes off github.com/Xilinx/mlir-aie/releases/expanded_assets/v1.4.3,
+# llvm-aie comes off github.com/Xilinx/llvm-aie/releases/expanded_assets/nightly
+# (mlir-aie's own utils/peano-requirements.txt pins this exact nightly and
+# points at that second index — passing only the mlir-aie -f 404s on llvm-aie).
+# Both -f URLs are passed to the single pip install in the Containerfile.
+mlir_aie==1.4.3
+llvm-aie==22.0.0.2026090701+3e93bf7b

@@ -144,6 +144,24 @@
       "maintainer_notes": "qwen-tts 0.1.1 on rocm/pytorch (ROCm 7.2.4, PyTorch 2.10), base pinned by digest."
     },
     {
+      "id": "xdna",
+      "title": "NPU (ggml-xdna)",
+      "summary": "Runs Qwen3.5 gated-delta-net models on the AMD XDNA 2 NPU via ggml-xdna.",
+      "image": "ghcr.io/hal0ai/hal0-runner-xdna",
+      "tag": null,
+      "digest": null,
+      "candidate": null,
+      "gate_report": null,
+      "lanes_gated": [],
+      "backends": [
+        "npu"
+      ],
+      "family": "llama-server",
+      "tier": "optional",
+      "recipe": "runners/xdna",
+      "maintainer_notes": "Not yet promoted: built and bench-smoked on the Strix Halo box during the spike, not pushed to ghcr or hardware-gated yet. Upstream llama.cpp fork (tetherto/qvac-fabric-llm.cpp) with an NPU ggml backend; alternative lane to flm with llama.cpp's own argv/API."
+    },
+    {
       "id": "cuda",
       "title": "NVIDIA CUDA",
       "summary": "llama.cpp for NVIDIA GPUs. Pick it on a box with an NVIDIA card.",
