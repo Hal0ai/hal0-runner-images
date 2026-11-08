@@ -148,11 +148,13 @@
       "title": "NPU (ggml-xdna)",
       "summary": "Runs Qwen3.5 gated-delta-net models on the AMD XDNA 2 NPU via ggml-xdna.",
       "image": "ghcr.io/hal0ai/hal0-runner-xdna",
-      "tag": null,
-      "digest": null,
+      "tag": "72f6dfa-rf1a3931",
+      "digest": "sha256:408ebc1616be325808cbfb70f141fbdd68e02dff9d681b367f2f122de5d8d08c",
       "candidate": null,
-      "gate_report": null,
-      "lanes_gated": [],
+      "gate_report": "https://github.com/Hal0ai/hal0-runner-images/releases/download/gate-xdna-72f6dfa-rf1a3931/gate-xdna-72f6dfa-rf1a3931-20261108T202851Z.json",
+      "lanes_gated": [
+        "npu"
+      ],
       "backends": [
         "npu"
       ],
