@@ -144,6 +144,30 @@ mem_extra_gib = 6
   kind = "concurrency"
   parallel = 4
 
+#: Speculative decoding with a separate drafter model (hal0 ADR-0031): the
+#: DFlash2 drafter is a second GGUF, not a head inside the target. It runs
+#: after qwen-no-mtp because the "mtp" check keeps one "on" record per lane and
+#: qwen-no-mtp compares against the qwen-mtp record.
+[[session]]
+name = "qwen-dflash2"
+doc = "Qwen3.8-27B UD-Q4_K_XL with the DFlash2 drafter (--spec-type draft-dflash)"
+args = ["--host", "0.0.0.0", "-m", "{path:qwen3.8-27b}", "-c", "98304",
+        "--spec-type", "draft-dflash", "--spec-draft-model", "{path:qwen3.8-27b-dflash2}",
+        "--spec-draft-ngl", "all", "--spec-draft-n-max", "7", "--jinja"]
+port = 8080
+mem_extra_gib = 10
+
+  #: Closest supported probe: gate.py has no JSON-path assertion (http-json
+  #: reads top-level object keys; /slots is an array). The "mtp" check kind
+  #: sends one temp-0 /completion and requires timings.draft_n > 0 and
+  #: timings.draft_n_accepted > 0, which also proves speculation is active.
+  [[session.check]]
+  name = "dflash-speculative"
+  doc = "a 64-token temp-0 completion reports draft_n > 0 and draft_n_accepted > 0, so the drafter is loaded and its tokens are accepted"
+  kind = "mtp"
+  role = "on"
+  n_predict = 64
+
 [[session]]
 name = "qwen-reasoning-none"
 doc = "--reasoning-format none (failed with 'Failed to initialize samplers' at b11510; hal0 #2545)"
