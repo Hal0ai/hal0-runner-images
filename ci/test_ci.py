@@ -440,6 +440,21 @@ class PromoteTests(unittest.TestCase):
         body = promote.pr_body([item])
         self.assertNotIn("- gate report:", body)
         self.assertIn("UNGATED external image", body)
+        self.assertIn("ghcr.io/ggml-org/llama.cpp", body)
+        self.assertNotIn("ggml-org's image", body)
+        self.assertNotIn("CUDA lane", body)
+
+    def test_pr_body_external_row_with_a_gate_report_does_not_claim_ungated(self):
+        item = {"runner": "halogen", "image": "ghcr.io/example/halogen", "tag": "v1", "digest": DIGEST,
+                "external": True, "source_commit": "", "gate_report": "https://x.test/halogen.json",
+                "gate_summary": "passed on vulkan", "lanes_gated": ["vulkan"]}
+        body = promote.pr_body([item])
+        self.assertIn("`ghcr.io/example/halogen` is not built here", body)
+        self.assertIn("no build provenance", body)
+        self.assertIn("- gate report: https://x.test/halogen.json", body)
+        self.assertIn("- gate result: passed on vulkan", body)
+        for wrong in ("UNGATED", "no hardware gate", "ggml-org", "CUDA"):
+            self.assertNotIn(wrong, body)
 
     def test_group_report_picks_each_runners_entry(self):
         def entry(k, d):
