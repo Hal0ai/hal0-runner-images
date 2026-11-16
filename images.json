@@ -170,7 +170,10 @@
       "image": "ghcr.io/ggml-org/llama.cpp",
       "tag": "server-cuda-b11804",
       "digest": "sha256:490d8cd8000203a3ab8fdfce14ef931e2aa85affd4dd4447bcc75f299f00fd9a",
-      "candidate": null,
+      "candidate": {
+        "tag": "server-cuda-b12429",
+        "digest": "sha256:d68ec493c0ff9105ddfe2e909fff304117bc6e1fffbbd8d94182bd455983c264"
+      },
       "gate_report": null,
       "lanes_gated": [],
       "backends": [
