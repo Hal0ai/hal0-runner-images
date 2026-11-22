@@ -1,6 +1,8 @@
 # Exact versions of every Python package in the ComfyUI venv. Most come from the
-# image hal0 shipped (sha256:fd8c8930...), built from the same ComfyUI commit; the
-# rest are the dependencies of the bundled custom nodes' requirements.txt files.
+# image hal0 shipped (sha256:fd8c8930...), built from ComfyUI c9602625; the
+# comfy-* and comfyui-* pins follow the requirements.txt of the pinned ComfyUI
+# commit (v0.30.0) and the exact pins those packages declare; the rest are the
+# dependencies of the bundled custom nodes' requirements.txt files.
 # pip installs ComfyUI's and the custom nodes' requirements under these
 # constraints, and check_custom_nodes.py fails the build if anything installed is
 # missing here or at a different version. Bump deliberately (docs/UPDATING.md).
@@ -21,16 +23,16 @@ certifi==2026.6.17
 charset-normalizer==3.4.9
 click==8.4.2
 colour-science==0.4.7
-comfy-aimdo==0.4.10
+comfy-aimdo==0.4.11
 comfy-angle==0.1.0
-comfy-kitchen==0.2.22
-comfyui-embedded-docs==0.5.8
-comfyui-frontend-package==1.45.21
-comfyui-workflow-templates==0.11.12
-comfyui-workflow-templates-core==0.3.275
-comfyui-workflow-templates-json==0.1.9
+comfy-kitchen==0.2.26
+comfyui-embedded-docs==0.5.9
+comfyui-frontend-package==1.47.11
+comfyui-workflow-templates==0.11.27
+comfyui-workflow-templates-core==0.3.292
+comfyui-workflow-templates-json==0.1.27
 comfyui-workflow-templates-media-api==0.3.84
-comfyui-workflow-templates-media-assets-01==0.1.5
+comfyui-workflow-templates-media-assets-01==0.1.17
 comfyui-workflow-templates-media-image==0.3.160
 comfyui-workflow-templates-media-other==0.3.229
 comfyui-workflow-templates-media-video==0.3.101

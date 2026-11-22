@@ -121,7 +121,7 @@
       "family": "comfyui",
       "tier": "default",
       "recipe": "runners/comfyui",
-      "maintainer_notes": "ComfyUI c9602625 (reports 0.28.0) with TheRock nightly torch 2.9.1 for gfx1151; constraints.txt pins every package of the previously shipped image."
+      "maintainer_notes": "ComfyUI b1693ecb (v0.30.0) with TheRock nightly torch 2.9.1 for gfx1151; constraints.txt pins every package in the image."
     },
     {
       "id": "qwen3tts",
