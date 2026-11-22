@@ -5,6 +5,7 @@
                          --gate-reports URL | "key=URL,key=URL"  --out result.json
     promote.py pr-body   --result result.json
     promote.py catalogue --result result.json [--file images.json]
+    promote.py hal0-check --result result.json --hal0-dir app/ [--create-missing]
     promote.py hal0-pin  --result result.json --hal0-dir app/ [--create-missing]
 
 One run promotes one runner, or a group (the llama.cpp group: standard + cpu +
@@ -26,6 +27,10 @@ cuda may not be ahead of it.
 A gate report is either one runner's document or a group document
 ({"schema": ..., "runners": [<per-runner documents>]}); one URL may cover every
 item, or each item may name its own (`key=URL`).
+
+`hal0-check` is the hal0 half of verification: it refuses, writing nothing, when
+the pin table in Hal0ai/hal0 has no row for a promoted runner (unless
+--create-missing), so the workflow can stop before it pushes anything.
 
 `catalogue` edits only tag, digest, candidate, gate_report and lanes_gated of
 each promoted runner in images.json. `hal0-pin` edits only those runners' rows
@@ -456,6 +461,12 @@ def cmd_hal0_pin(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_hal0_check(args: argparse.Namespace) -> int:
+    path = Path(args.hal0_dir) / HAL0_PIN_FILE
+    edit_hal0_pins(path.read_text(), _load_result(args.result), args.create_missing)  # same refusal as hal0-pin; result discarded
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -475,6 +486,12 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--result", required=True)
     c.add_argument("--file", default=str(lib.ROOT / CATALOGUE_FILE))
     c.set_defaults(func=cmd_catalogue)
+
+    k = sub.add_parser("hal0-check")
+    k.add_argument("--result", required=True)
+    k.add_argument("--hal0-dir", required=True)
+    k.add_argument("--create-missing", action="store_true")
+    k.set_defaults(func=cmd_hal0_check)
 
     h = sub.add_parser("hal0-pin")
     h.add_argument("--result", required=True)
