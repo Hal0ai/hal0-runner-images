@@ -30,6 +30,14 @@ digest it resolves to (the registry's tag list is read in full to find it). It i
 only when newer than the pinned tag and any current candidate. When only `cuda` has a
 newer tag, the PR moves only that candidate. Promote moves it to the pin.
 
+When the pin moves, the watch also checks that every patch carried by a runner on the
+pin still applies at the new release (what `python3 scripts/runner.py build <key> --check`
+does for the patch series). It fetches only the files each patch touches at the new commit
+through the GitHub contents API, so no clone is added to the job. If a patch does not
+apply, or its file cannot be read, the PR is still opened, but its description starts with
+**Not ready**, names the runner, the patch and the release, and carries the `git apply`
+error; the job log gets a warning. Regenerate or drop the patch in that PR.
+
 The PR does not touch the `#:` notes in the pin file or the gate probes in
 `gates/<key>.toml`; its checklist lists them for a person. Read the upstream changes before
 merging: these images run with GPU access on people's machines, and a pin only
