@@ -9,6 +9,7 @@ a fake `api` function, every file edit runs against a temp tree.
 
 from __future__ import annotations
 
+import base64
 import difflib
 import json
 import sys
@@ -253,6 +254,99 @@ class ReleaseWatchTests(unittest.TestCase):
             self.assertIsNone(bump.tag)
             self.assertEqual((bump.branch, bump.files), ("bot/bump-llama-cpp-cuda-b11541", ["images.json"]))
             self.assertEqual((root / "runners/llama.cpp.toml").read_text(), before)
+
+
+PATCHED_SRC = "#include <set>\n#include <numeric>\n#define LIMIT 2000\nint x;\n"
+PATCH = (
+    "diff --git a/src/g.cpp b/src/g.cpp\n--- a/src/g.cpp\n+++ b/src/g.cpp\n@@ -1,4 +1,4 @@\n"
+    " #include <set>\n #include <numeric>\n-#define LIMIT 2000\n+#define LIMIT 100000\n int x;\n"
+)
+
+
+class PatchCheckTests(unittest.TestCase):
+    """The bump flow runs the standard patch series against the new release."""
+
+    def _tree(self, root, patch=PATCH):
+        spec = {"manifest": MANIFEST.format(key="standard") + '\n[[patches]]\nfile = "0001-x.patch"\n'}
+        make_tree(root, {"standard": spec, "cpu": {}, "kokoro": {"manifest": '[source]\nkind = "pypi"\n'}},
+                  pin={"version": "b11510", "ref": OLD_SHA})
+        (root / "runners/standard/patches").mkdir()
+        (root / "runners/standard/patches/0001-x.patch").write_text(patch)
+
+    def _api(self, src, seen=None):
+        base = ReleaseWatchTests._api(self)
+
+        def api(path):
+            if "/contents/" in path:
+                if seen is not None:
+                    seen.append(path)
+                if src is None:
+                    return None
+                return {"encoding": "base64", "content": base64.b64encode(src.encode()).decode()}
+            return base(path)
+        return api
+
+    def test_patch_that_applies_is_reported_and_the_body_does_not_block(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            self._tree(root)
+            seen: list[str] = []
+            bump = rw.run(root, self._api(PATCHED_SRC, seen), apply=True)
+            self.assertEqual((bump.patches_checked, bump.patch_failures), (["standard/0001-x.patch"], []))
+            self.assertEqual(seen, [f"/repos/ggml-org/llama.cpp/contents/src/g.cpp?ref={NEW_SHA}"])  # only the touched file
+            body = rw.pr_body(bump)
+            self.assertIn("Carried patches apply at this release", body)
+            self.assertNotIn("Not ready", body)
+
+    def test_patch_that_no_longer_applies_still_yields_a_bump_and_a_blocked_body(self):
+        moved = "#include <set>\n#include <numeric>\n#define NEW 1\n#define LIMIT 2000\nint x;\n"
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            self._tree(root)
+            bump = rw.run(root, self._api(moved), apply=True)
+            self.assertEqual(bump.files, ["runners/llama.cpp.toml"])  # the bump itself is still prepared
+            self.assertEqual([(f["runner"], f["patch"]) for f in bump.patch_failures], [("standard", "0001-x.patch")])
+            self.assertIn("patch failed", bump.patch_failures[0]["detail"])
+            body = rw.pr_body(bump)
+            self.assertIn("## Not ready: a carried patch does not apply at `b11552`", body)
+            self.assertIn("`standard`: `0001-x.patch` at `b11552`", body)
+            self.assertIn("Fix the patch that does not apply", body)
+            self.assertNotIn("Carried patches apply", body)
+
+    def test_an_unreadable_upstream_file_is_a_failure_not_a_pass(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            self._tree(root)
+            bump = rw.run(root, self._api(None), apply=True)
+            self.assertEqual(len(bump.patch_failures), 1)
+            self.assertIn("could not be read", bump.patch_failures[0]["detail"])
+
+    def test_no_patches_on_the_pin_means_nothing_to_check(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            make_tree(root, {"standard": {}, "cpu": {}}, pin={"version": "b11510", "ref": OLD_SHA})
+            bump = rw.run(root, self._api(None), apply=True)  # a contents call would return None and fail
+            self.assertEqual((bump.patches_checked, bump.patch_failures), ([], []))
+            self.assertNotIn("Carried patches", rw.pr_body(bump))
+
+    def test_pin_unchanged_checks_nothing(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            self._tree(root)
+            (root / "runners/llama.cpp.toml").write_text(PIN.format(version="b11552", ref=NEW_SHA))
+            self.assertIsNone(rw.run(root, self._api(None), apply=True))
+
+    def test_series_is_applied_in_order(self):
+        second = PATCH.replace("100000", "7").replace("-#define LIMIT 2000", "-#define LIMIT 100000")
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            self._tree(root)
+            (root / "runners/standard/manifest.toml").write_text(
+                MANIFEST.format(key="standard") + '\n[[patches]]\nfile = "0001-x.patch"\n\n[[patches]]\nfile = "0002-y.patch"\n')
+            (root / "runners/standard/patches/0002-y.patch").write_text(second)
+            bump = rw.run(root, self._api(PATCHED_SRC), apply=True)
+            self.assertEqual((bump.patches_checked, bump.patch_failures),
+                             (["standard/0001-x.patch", "standard/0002-y.patch"], []))
 
 
 class PromoteTests(unittest.TestCase):
