@@ -8,16 +8,40 @@
 
 [llama_cpp]
 repo = "https://github.com/ggml-org/llama.cpp.git"
-#: Release b11840 (2026-10-23). Picked up since b11716: #30928 (Flint,
-#: FlintForCausalLM), #30927/#30945/#30663 (qwen4exp DFlash layer inputs,
-#: DFlash FC input scale, DFlash2 probabilistic drafts), #27196 (logprobs
-#: with speculative decoding), #30666 (SWA checkpoint invalidation),
-#: #30836 (HIP mmf reduction for tile widths not divisible by 64), #30861
-#: (MoE down projection scaled per expert token). Gate risk items: #30856 and
-#: #28554 (/v1/messages sampling params and slot id), #30863 (Responses SSE
-#: output_index), #30819/#30929/#30941 (jinja filters and namespaces),
-#: #30785/#30889 (vendored cpp-httplib 0.62.0 and BoringSSL). #28277 adds an
-#: opt-in `--connect` p2p mode; hal0 never passes it.
-version = "b11840"
-ref = "36e36e63a54fc8f85b95e9c499a022b597e478dd"
-ref_description = "release b11840: hexagon: add CEIL op (#31006)"
+#: Release b12633 (2026-11-22). Picked up since b11840 (793 commits): LFM3
+#: (LiquidAI LFM3-1.7B / LFM3-VL-2B, #31252, arch lfm3, needs >= b11946),
+#: #31374 (end reasoning-budget forcing on the template's own end tag: fixes
+#: LFM3 response_format 500 "Unexpected empty grammar stack", #31328),
+#: #32016 (DFlash split into draft-dflash, draft-dflash2, draft-dspark and
+#: draft-lilicorr; draft-dflash and draft-mtp keep their names), #30141 and
+#: #31927 (MTP hidden state save/restore, hidden states read from a device
+#: buffer), HIP and Vulkan work for gfx11/gfx12 (#32308 MMVQ ne11 gate tuned
+#: for RDNA3.5, #31323 and #30280 Vulkan flash attention and split-K for
+#: RDNA3/4, #31804 RDNA4 MMVQ, #32790 HIP NVFP4 scale fix). Gate risk items:
+#: #32154 and #32434 (server slot scheduler refactor and its lora/recurrent
+#: fix; slot reuse, prompt cache and parallel slots), #32356 (batch API
+#: migrated to llama_batch_ext), #31153 and #29755 (grammar recursion limit,
+#: GRAMMAR_RECURSIVE_LIMIT 256; deep tool schemas), #32098 (CORS origin
+#: enforcement and DNS-rebinding protection: a request whose Origin does not
+#: match --cors-origins is refused), #32113 (server tools, MCP servers or the
+#: MCP proxy on a non-loopback --host without an API key are refused unless
+#: --allow-unauthenticated-tools; hal0 passes --host 0.0.0.0 and none of
+#: --tools, --mcp-servers-config or --webui-mcp-proxy by default, and the gate
+#: sessions pass none of them), #32115 (media URLs and the MCP CORS
+#: proxy refuse local and private addresses unless --media-allow-private-urls
+#: or --ui-mcp-proxy-allow-private-urls; an image_url on the LAN now fails),
+#: #31242 (--model or -hf is required: a server started with neither exits),
+#: #30565 (llama : prune: drops the --defrag-thold option). Flag audit b11840..b12633 (every
+#: quoted flag and LLAMA_ARG_ string in common/ and tools/): removed
+#: --defrag-thold / -dt / LLAMA_ARG_DEFRAG_THOLD, which hal0 never passes;
+#: added --allow-unauthenticated-tools, --media-allow-private-urls,
+#: --models-memory-margin, --moe-cache-cpu-share, --ple (alias of the new
+#: --shard), --tts-speaker-text, --tts-voice and --ui-mcp-proxy-allow-private-urls,
+#: none passed by hal0. Every other flag hal0 passes is still present.
+#: The grammar patch's context moved in this range (an added #include and the
+#: new GRAMMAR_RECURSIVE_LIMIT line), so the patch was regenerated; it applies
+#: to b12633 and not to b11840. MAX_REPETITION_THRESHOLD is still 2000
+#: upstream at b12633, so drop_when is not met.
+version = "b12633"
+ref = "9c10c94e16ebc4f3ed7c06264a93bf7e019c3f26"
+ref_description = "release b12633: ggml : fix nonzero clear on WebGPU and non-UMA devices (#32727)"

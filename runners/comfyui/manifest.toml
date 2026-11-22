@@ -17,14 +17,15 @@ tier = "default"
 [image]
 package = "ghcr.io/hal0ai/hal0-runner-comfyui"
 #: ComfyUI's own __version__ at the pinned commit (comfyui_version.py).
-#: The commit is 16 commits after the v0.28.0 tag; it is the exact source
-#: the published hal0 ComfyUI image was built and smoke-tested from.
-version = "0.28.0"
+#: The commit is the upstream v0.30.0 tag itself (lightweight tag, no
+#: annotation), the first release with the fix for CVE-2026-92816 (path
+#: traversal via dataset save nodes).
+version = "0.30.0"
 
 [source]
 #: comfyanonymous/ComfyUI moved to Comfy-Org/ComfyUI; GitHub redirects.
 repo = "https://github.com/Comfy-Org/ComfyUI.git"
-ref = "c9602625e445e9ee37d3ac6faf5ea9ec1e0de87e"
+ref = "b1693ecba9f5b65f8c80ab36b195ab963ec92413"
 
 [build]
 heavy = true
@@ -43,7 +44,7 @@ TORCH_VER = "2.9.1+rocm7.13.0a20260501"
 VISION_VER = "0.24.0+rocm7.13.0a20260501"
 AUDIO_VER = "2.9.0+rocm7.13.0a20260501"
 COMFYUI_REPO = "https://github.com/Comfy-Org/ComfyUI.git"
-COMFYUI_REF = "c9602625e445e9ee37d3ac6faf5ea9ec1e0de87e"
+COMFYUI_REF = "b1693ecba9f5b65f8c80ab36b195ab963ec92413"
 #: cubiq/ComfyUI_essentials (2025-04-14)
 ESSENTIALS_REF = "9d9f4bedfc9f0321c19faf71855e228c93bd0dc9"
 #: kyuz0/ComfyUI-AMDGPUMonitor (2025-11-23)

@@ -26,7 +26,7 @@ on this page.
 | `[image]` | `package` = `ghcr.io/hal0ai/hal0-runner-<key>`; `version` = the upstream version, the first half of the tag. Omitted when the recipe uses a shared pin. |
 | `[source]` | git: `repo`, `ref` (full commit SHA), optional `release`, and `checkout = true` to clone it on the host and apply `patches/`. PyPI: `kind = "pypi"`, `package`, `version`, `repo` (project page). Shared llama.cpp pin: `pin = "llama.cpp.toml"` instead of `repo`/`ref`/`release`/`version`. |
 | `[build]` | `heavy` (needs the big CI runner setup), `timeout_minutes`, `cmake_flags` (passed as `CMAKE_FLAGS`). |
-| `[build.args]` | Every Containerfile ARG, as strings. Base images are always `image@sha256:<digest>`. |
+| `[build.args]` | Every Containerfile ARG, as strings. Base images are always `image@sha256:<digest>`. If a `<X>_REPO` build arg matches `[source].repo`, `scripts/test_repo_consistency.py` requires the paired `<X>_REF` to equal `[source].ref` (the Containerfile must check out the commit the manifest declares). |
 | `[[patches]]` | `file`, `why`, `drop_when`. |
 | `[verification]` | Superseded by `gates/<key>.toml` (below), which `scripts/gate.py` runs; the prose list here goes at the recipe's next change. |
 | `[lifecycle]` | `purpose`, `needed_for`, `retire_when`, and `[lifecycle.track]`: where `scripts/source_watch.py` looks for new releases (`kind = "github-release"` with a tag `pattern` and optional `include_prereleases`, or `kind = "pypi"`). |

@@ -192,6 +192,42 @@ def test_manifests() -> None:
                   f"runners/{key}: turn the web UI off with upstream's current option names")
 
 
+def normalise_repo(url: str) -> str:
+    """repo URL for comparison: strip whitespace, a trailing '/', a trailing '.git'."""
+    u = url.strip().rstrip("/")
+    if u.endswith(".git"):
+        u = u[: -len(".git")]
+    return u
+
+
+def test_source_build_ref_pins() -> None:
+    """A build arg pair <X>_REPO/<X>_REF that names [source].repo must check out [source].ref.
+
+    PR #51 bumped runners/flm's [source].ref without updating FLM_REF, so the
+    Containerfile built the old commit while the manifest claimed the new one.
+    manifests() already resolves [source].pin (runners/llama.cpp.toml), so
+    standard/cpu are checked against their resolved values; they carry no
+    REPO/REF build-arg pair (checkout = true clones [source] directly), so
+    this rule has nothing to pair against and they are skipped by construction.
+    """
+    arg_re = re.compile(r"^(.+)_REPO$")
+    for key, doc in manifests().items():
+        source = doc.get("source", {})
+        repo, ref = source.get("repo"), source.get("ref")
+        if not isinstance(repo, str) or not isinstance(ref, str):
+            continue  # no git [source] to drift against (e.g. a pypi recipe)
+        bargs = doc.get("build", {}).get("args", {})
+        for name, value in bargs.items():
+            m = arg_re.match(name)
+            if not m or normalise_repo(str(value)) != normalise_repo(repo):
+                continue
+            ref_name = f"{m.group(1)}_REF"
+            ref_value = bargs.get(ref_name)
+            check(ref_value == ref,
+                  f"runners/{key}: [build.args].{ref_name} ({ref_value!r}) != [source].ref ({ref!r}), "
+                  f"but [build.args].{name} matches [source].repo")
+
+
 def test_gates() -> None:
     keys = runner.keys()
     for key in keys:
@@ -359,7 +395,8 @@ def test_no_lan_addresses() -> None:
 
 
 def main() -> int:
-    for t in (test_catalogue_shape, test_catalogue_matches_recipes, test_manifests, test_gates, test_containerfiles,
+    for t in (test_catalogue_shape, test_catalogue_matches_recipes, test_manifests, test_source_build_ref_pins,
+              test_gates, test_containerfiles,
               test_python_pins, test_llama_release, test_standard_entrypoint, test_no_retired_names,
               test_allowlist, test_no_lan_addresses):
         before = len(failures)

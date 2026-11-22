@@ -30,6 +30,14 @@ digest it resolves to (the registry's tag list is read in full to find it). It i
 only when newer than the pinned tag and any current candidate. When only `cuda` has a
 newer tag, the PR moves only that candidate. Promote moves it to the pin.
 
+When the pin moves, the watch also checks that every patch carried by a runner on the
+pin still applies at the new release (what `python3 scripts/runner.py build <key> --check`
+does for the patch series). It fetches only the files each patch touches at the new commit
+through the GitHub contents API, so no clone is added to the job. If a patch does not
+apply, or its file cannot be read, the PR is still opened, but its description starts with
+**Not ready**, names the runner, the patch and the release, and carries the `git apply`
+error; the job log gets a warning. Regenerate or drop the patch in that PR.
+
 The PR does not touch the `#:` notes in the pin file or the gate probes in
 `gates/<key>.toml`; its checklist lists them for a person. Read the upstream changes before
 merging: these images run with GPU access on people's machines, and a pin only
@@ -185,6 +193,10 @@ sdxl                 = "comfyui/checkpoints/sd_xl_base_1.0.safetensors"
 path = "/srv/flm/models"
 tag  = "llama3.2:1b"
 
+[models.xdna-models]              # a GGUF the xdna runner serves on the NPU, and its name
+path = "xdna/Qwen3.5-0.8B-Q4_K_M-so5.gguf"
+tag  = "Qwen3.5-0.8B-Q4_K_M-so5.gguf"
+
 [models.stt-sample]               # 16 kHz mono 16-bit WAV of short English speech, and what it says
 path = "/srv/gate/sample-16k.wav"
 text = "and so my fellow americans ask not what your country can do for you"
@@ -200,6 +212,7 @@ text = "and so my fellow americans ask not what your country can do for you"
 | `qwen3tts` | `qwen3tts`, optional `qwen3tts-cache` |
 | `halogen` | `halogen-ht43`: the directory holding `qwen38-flash-next-ht43.hgn` with `qwen38-flash-next-ngram.hgn`, `qwen38-flash-next-vision.hgn` and `tokenizer/` beside it (the file names of the Hugging Face repo `peonist-ai/halogen-qwen3.8-flash-next`), mounted read-only whole because the entrypoint finds the companions by name |
 | `comfyui` | `sdxl` |
+| `xdna` | `xdna-models` (with `tag`) |
 
 A key that is missing, or whose file does not exist, skips the probes that need
 it. A skip fails the gate unless `--allow-skip` names it.

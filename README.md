@@ -14,11 +14,12 @@ One name per runner, used everywhere: the hal0 runner key, the catalogue
 |---|---|---|---|---|
 | `standard` | Standard | llama.cpp on AMD GPUs, ROCm and Vulkan (gfx1151) | ggml-org/llama.cpp release `b11552` | default |
 | `cpu` | CPU | llama.cpp on the processor, any x86_64 box | ggml-org/llama.cpp release `b11552` | default |
-| `flm` | NPU (FastFlowLM) | FastFlowLM on the AMD XDNA 2 NPU | ROCm/FastFlowLM `v1.0.10` | default |
+| `flm` | NPU (FastFlowLM) | FastFlowLM on the AMD XDNA 2 NPU | ROCm/FastFlowLM `v1.0.13` | default |
 | `kokoro` | Kokoro speech | text-to-speech on the CPU | kokoro-onnx `0.4.9` | default |
 | `moonshine` | Moonshine transcription | speech-to-text on the CPU | useful-moonshine-onnx `20251121` | default |
-| `comfyui` | ComfyUI | image and video generation on the GPU (ROCm) | Comfy-Org/ComfyUI `0.28.0` (commit `c9602625`) | default |
+| `comfyui` | ComfyUI | image and video generation on the GPU (ROCm) | Comfy-Org/ComfyUI `0.30.0` (commit `b1693ecb`) | default |
 | `qwen3tts` | Qwen3 TTS | multilingual text-to-speech on the GPU (ROCm) | qwen-tts `0.1.1` | optional |
+| `xdna` | NPU (ggml-xdna) | llama-server with Tether's ggml-xdna backend on the AMD XDNA 2 NPU | tetherto/qvac-fabric-llm.cpp commit `72f6dfa` | optional |
 | `cuda` | NVIDIA CUDA | llama.cpp on NVIDIA GPUs | ggml-org's own image `server-cuda-b11541` (not built here) | optional |
 | `halogen` | halogen (Flash-Next) | Peonist's engine for Qwen3.8-Flash-Next on Strix Halo (ROCm) | Peonist's own image `halogen-flash-server` `0.18.22` (not built here) | optional |
 

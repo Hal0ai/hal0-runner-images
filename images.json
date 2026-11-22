@@ -6,10 +6,10 @@
       "title": "Standard",
       "summary": "llama.cpp for AMD GPUs, ROCm or Vulkan, built from the official upstream release.",
       "image": "ghcr.io/hal0ai/hal0-runner-standard",
-      "tag": "b11840-rba99f5d",
-      "digest": "sha256:d1f7216c2c62d3c19990f488a4df838a555f6fa6c4dac556cf7a166ea855efcd",
+      "tag": "b12633-r4f071ba",
+      "digest": "sha256:8dba30e46c4c461ac2e37c288047662af6a3210b474a1aba56f8421f1d12972e",
       "candidate": null,
-      "gate_report": "https://github.com/Hal0ai/hal0-runner-images/releases/download/gate-standard-b11840-rba99f5d/gate-standard-b11840-rba99f5d-20261023T211647Z.json",
+      "gate_report": "https://github.com/Hal0ai/hal0-runner-images/releases/download/gate-standard-b12633-r4f071ba/gate-standard-b12633-r4f071ba-20261122T193735Z.json",
       "lanes_gated": [
         "rocm",
         "vulkan"
@@ -28,10 +28,10 @@
       "title": "CPU",
       "summary": "llama.cpp on the processor, no GPU needed. A slow fallback for boxes without a supported GPU.",
       "image": "ghcr.io/hal0ai/hal0-runner-cpu",
-      "tag": "b11840-rba99f5d",
-      "digest": "sha256:c74a4fa963e2499b688d118467355f76ca462dd2ef5c4f2ff4e3850c1e3ac52a",
+      "tag": "b12633-r4f071ba",
+      "digest": "sha256:9e69f1a64810b5c1213a5350832a9b6bc68f7f63032ae9f101f58cd104d3e1e1",
       "candidate": null,
-      "gate_report": "https://github.com/Hal0ai/hal0-runner-images/releases/download/gate-cpu-b11840-rba99f5d/gate-cpu-b11840-rba99f5d-20261023T212815Z.json",
+      "gate_report": "https://github.com/Hal0ai/hal0-runner-images/releases/download/gate-cpu-b12633-r4f071ba/gate-cpu-b12633-r4f071ba-20261122T194839Z.json",
       "lanes_gated": [
         "cpu"
       ],
@@ -48,10 +48,10 @@
       "title": "NPU (FastFlowLM)",
       "summary": "Runs supported models on the AMD XDNA 2 NPU, leaving the GPU free.",
       "image": "ghcr.io/hal0ai/hal0-runner-flm",
-      "tag": "1.0.10-r1c3f49e",
-      "digest": "sha256:e18b4b1111aa217cca68a91302d81342f5d89e17e49b0714feeec8e1cac7fa56",
+      "tag": "1.0.12-r257ff92",
+      "digest": "sha256:f58cbf778ede916b8805b25461da487490f427c773dd5ad024ef306f59c601af",
       "candidate": null,
-      "gate_report": "https://github.com/Hal0ai/hal0-runner-images/releases/download/gate-flm-1.0.10-r1c3f49e/gate-flm-1.0.10-r1c3f49e.json",
+      "gate_report": "https://github.com/Hal0ai/hal0-runner-images/releases/download/gate-flm-1.0.12-r257ff92/gate-flm-1.0.12-r257ff92-20261105T035855Z.json",
       "lanes_gated": [
         "npu"
       ],
@@ -61,7 +61,7 @@
       "family": "flm",
       "tier": "default",
       "recipe": "runners/flm",
-      "maintainer_notes": "FastFlowLM v1.0.10 with XRT/xdna-driver 2.21.75. Needs the amdxdna driver and /dev/accel on the host."
+      "maintainer_notes": "FastFlowLM v1.0.13 with XRT/xdna-driver 2.21.75. Needs the amdxdna driver and /dev/accel on the host."
     },
     {
       "id": "kokoro",
@@ -108,10 +108,10 @@
       "title": "ComfyUI",
       "summary": "Image and video generation on the GPU (ROCm).",
       "image": "ghcr.io/hal0ai/hal0-runner-comfyui",
-      "tag": "0.28.0-r6996d85",
-      "digest": "sha256:8c1dd5d7586893a8e27ec2f9fd11623a750b6a4c2ab098e62f9dcd32ec49cfa2",
+      "tag": "0.30.0-rf37ebf1",
+      "digest": "sha256:77a6a4e8f1c6be12157d89d8ce4ea71a91db9fddf3fc7ad4bdfc534c1868fca9",
       "candidate": null,
-      "gate_report": "https://github.com/Hal0ai/hal0-runner-images/releases/download/gate-comfyui-0.28.0-r6996d85/gate-comfyui-0.28.0-r6996d85-20261011T094928Z.json",
+      "gate_report": "https://github.com/Hal0ai/hal0-runner-images/releases/download/gate-comfyui-0.30.0-rf37ebf1/gate-comfyui-0.30.0-rf37ebf1-20261122T191144Z.json",
       "lanes_gated": [
         "rocm"
       ],
@@ -121,7 +121,7 @@
       "family": "comfyui",
       "tier": "default",
       "recipe": "runners/comfyui",
-      "maintainer_notes": "ComfyUI c9602625 (reports 0.28.0) with TheRock nightly torch 2.9.1 for gfx1151; constraints.txt pins every package of the previously shipped image."
+      "maintainer_notes": "ComfyUI b1693ecb (v0.30.0) with TheRock nightly torch 2.9.1 for gfx1151; constraints.txt pins every package in the image."
     },
     {
       "id": "qwen3tts",
@@ -144,12 +144,32 @@
       "maintainer_notes": "qwen-tts 0.1.1 on rocm/pytorch (ROCm 7.2.4, PyTorch 2.10), base pinned by digest."
     },
     {
+      "id": "xdna",
+      "title": "NPU (ggml-xdna)",
+      "summary": "Runs Qwen3.5 gated-delta-net models on the AMD XDNA 2 NPU via ggml-xdna.",
+      "image": "ghcr.io/hal0ai/hal0-runner-xdna",
+      "tag": "72f6dfa-rf1a3931",
+      "digest": "sha256:408ebc1616be325808cbfb70f141fbdd68e02dff9d681b367f2f122de5d8d08c",
+      "candidate": null,
+      "gate_report": "https://github.com/Hal0ai/hal0-runner-images/releases/download/gate-xdna-72f6dfa-rf1a3931/gate-xdna-72f6dfa-rf1a3931-20261108T202851Z.json",
+      "lanes_gated": [
+        "npu"
+      ],
+      "backends": [
+        "npu"
+      ],
+      "family": "llama-server",
+      "tier": "optional",
+      "recipe": "runners/xdna",
+      "maintainer_notes": "Not yet promoted: built and bench-smoked on the Strix Halo box during the spike, not pushed to ghcr or hardware-gated yet. Upstream llama.cpp fork (tetherto/qvac-fabric-llm.cpp) with an NPU ggml backend; alternative lane to flm with llama.cpp's own argv/API."
+    },
+    {
       "id": "cuda",
       "title": "NVIDIA CUDA",
       "summary": "llama.cpp for NVIDIA GPUs. Pick it on a box with an NVIDIA card.",
       "image": "ghcr.io/ggml-org/llama.cpp",
-      "tag": "server-cuda-b11804",
-      "digest": "sha256:490d8cd8000203a3ab8fdfce14ef931e2aa85affd4dd4447bcc75f299f00fd9a",
+      "tag": "server-cuda-b12627",
+      "digest": "sha256:f46a7938f84a62f7c2eba2dfc985d921cb54fb3ec7b4e729cec2cee2cbace609",
       "candidate": null,
       "gate_report": null,
       "lanes_gated": [],

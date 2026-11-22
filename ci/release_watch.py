@@ -29,10 +29,13 @@ take the highest `b<N>` instead.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import re
+import subprocess
 import sys
+import tempfile
 import tomllib
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -74,6 +77,9 @@ class Bump:
     branch: str = ""
     title: str = ""
     files: list[str] = field(default_factory=list)
+    # Patches of the runners that share the pin, checked against the new release.
+    patches_checked: list[str] = field(default_factory=list)
+    patch_failures: list[dict] = field(default_factory=list)   # {"runner", "patch", "detail"}
 
 
 def version_key(tag: str) -> tuple[int, ...] | None:
@@ -185,6 +191,73 @@ def apply_cuda(root: Path, tag: str, digest: str) -> str:
     return CATALOGUE
 
 
+# ---- do the carried patches still apply? ----------------------------------
+
+def pinned_patches(root: Path) -> list[tuple[str, Path]]:
+    """(runner key, patch file) in apply order, for every runner on the shared pin."""
+    out: list[tuple[str, Path]] = []
+    for manifest in sorted((root / "runners").glob("*/manifest.toml")):
+        doc = tomllib.loads(manifest.read_text())
+        if (doc.get("source") or {}).get("pin") != Path(PIN_FILE).name:
+            continue
+        for p in doc.get("patches", []):
+            out.append((manifest.parent.name, manifest.parent / "patches" / p.get("file", "")))
+    return out
+
+
+def patch_targets(patch: str) -> list[str]:
+    """The upstream files a unified diff changes (its `--- a/<path>` lines)."""
+    return re.findall(r"^--- a/(\S+)$", patch, re.MULTILINE)
+
+
+def upstream_file(path: str, commit: str, api: Api) -> str:
+    """One file of the upstream tree at `commit`, through the contents API."""
+    data = api(f"/repos/{UPSTREAM}/contents/{path}?ref={commit}")
+    if not isinstance(data, dict) or data.get("encoding") != "base64" or not data.get("content"):
+        raise lib.CIError(f"{UPSTREAM}@{commit[:12]}: {path} could not be read through the contents API")
+    return base64.b64decode(data["content"]).decode("utf-8")
+
+
+def check_patches(root: Path, commit: str, api: Api) -> tuple[list[str], list[dict]]:
+    """Run the equivalent of `scripts/runner.py build <key> --check` for the patches only.
+
+    runner.py clones the whole upstream repo; here only the files each patch
+    touches are fetched at `commit` into an empty repository and the series is
+    applied in order (`git apply --check`, then `git apply`, as runner.stage
+    does), so no clone is added to this job. Returns (checked, failures); a file
+    that cannot be fetched counts as a failure, never as a pass.
+    """
+    checked: list[str] = []
+    failures: list[dict] = []
+    trees: dict[str, Path] = {}
+    with tempfile.TemporaryDirectory() as tmp:
+        for runner, patch_path in pinned_patches(root):
+            name = f"{runner}/{patch_path.name}"
+            checked.append(name)
+            if any(f["runner"] == runner for f in failures):
+                continue  # a later patch of a series needs the earlier ones applied
+            try:
+                tree = trees.get(runner)
+                if tree is None:
+                    tree = trees[runner] = Path(tmp) / runner
+                    tree.mkdir()
+                    subprocess.run(["git", "init", "-q"], cwd=tree, check=True, capture_output=True)
+                text = patch_path.read_text()
+                for target in patch_targets(text):
+                    dest = tree / target
+                    if not dest.exists():
+                        dest.parent.mkdir(parents=True, exist_ok=True)
+                        dest.write_text(upstream_file(target, commit, api))
+                for flags in (["--check"], []):
+                    proc = subprocess.run(["git", "apply", *flags, str(patch_path)], cwd=tree,
+                                          capture_output=True, text=True)
+                    if proc.returncode != 0:
+                        raise lib.CIError((proc.stderr or proc.stdout).strip() or "git apply failed")
+            except (lib.CIError, OSError, subprocess.CalledProcessError, UnicodeDecodeError) as e:
+                failures.append({"runner": runner, "patch": patch_path.name, "detail": str(e)})
+    return checked, failures
+
+
 def run(
     root: Path, api: Api, apply: bool,
     cuda_tags: Callable[[], list[str]] | None = None,
@@ -223,6 +296,8 @@ def run(
     bump.branch = "-".join(x for x in (f"bot/bump-llama-cpp-{release}" if moves else "bot/bump-llama-cpp", cuda_suffix) if x)
     what = ([f"llama.cpp to {release}"] if moves else []) + ([f"cuda to {cuda_new}"] if cuda_new else [])
     bump.title = "chore(runners): bump " + " and ".join(what)
+    if moves:
+        bump.patches_checked, bump.patch_failures = check_patches(root, commit, api)  # type: ignore[arg-type]
     if apply:
         if moves:
             bump.files.append(apply_pin(root, release, commit, subject or ""))  # type: ignore[arg-type]
@@ -233,6 +308,17 @@ def run(
 
 def pr_body(b: Bump) -> str:
     out: list[str] = []
+    if b.patch_failures:
+        out += [f"## Not ready: a carried patch does not apply at `{b.tag}`", "",
+                "`git apply --check` of the patch series against upstream at this release failed. "
+                "`build.yml` will fail for the same reason. The bump cannot merge until the patch is "
+                "regenerated or dropped (`drop_when` in the runner manifest), in this PR.", ""]
+        for f in b.patch_failures:
+            out += [f"- `{f['runner']}`: `{f['patch']}` at `{b.tag}` (`{(b.commit or '')[:12]}`)", "",
+                    "  ```", *("  " + ln for ln in f["detail"].splitlines()[:8]), "  ```"]
+        out.append("")
+    elif b.patches_checked:
+        out += ["Carried patches apply at this release: " + ", ".join(f"`{p}`" for p in b.patches_checked) + ".", ""]
     if b.tag:
         out += [f"Moves the shared llama.cpp pin (`runners/llama.cpp.toml`: `standard`, `cpu`) from `{b.previous}` to "
                 f"[`{b.tag}`]({b.url}) (`{b.commit[:12]}`).", "",  # type: ignore[index]
@@ -249,6 +335,7 @@ def pr_body(b: Bump) -> str:
                 "- [ ] the `#:` notes above `version` in `runners/llama.cpp.toml`, which describe the old release",
                 "- [ ] gate probes in `gates/<key>.toml` that should change for this release (read the upstream diff)", "",
                 "## Before merging", "",
+                *(["- [ ] **Fix the patch that does not apply** (see the top of this description)"] if b.patch_failures else []),
                 "- [ ] Read the upstream diff for changes to flags, defaults, API or chat templating",
                 "- [ ] `build.yml` is green: it builds the changed images with `push=false`", ""]
     out += ["## After merging", "",
@@ -269,6 +356,8 @@ def main(argv: list[str] | None = None) -> int:
     bump = run(lib.ROOT, lambda p: lib.github_get(p, token), args.apply)
     result = {"bump": asdict(bump) if bump else None}
     print(json.dumps(result, indent=2))
+    for f in (bump.patch_failures if bump else []):
+        print(f"::warning title=Patch does not apply::{f['runner']}/{f['patch']} at {bump.tag}", file=sys.stderr)  # type: ignore[union-attr]
     if args.body_file and bump:
         Path(args.body_file).write_text(pr_body(bump))
     if args.json_file:
