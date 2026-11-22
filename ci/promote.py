@@ -238,9 +238,16 @@ def pr_body(items: list[dict]) -> str:
         out.append(f"### `{i['runner']}`: `{i['image']}:{i['tag']}`\n")
         out.append(f"- digest: `{i['digest']}`")
         if i["external"]:
-            out.append("- **UNGATED external image**: ggml-org's image, not built here, so there is no build provenance "
-                       "to verify and no hardware gate (the CUDA lane is hidden in hal0); `lanes_gated` stays empty. "
-                       "Only the registry digest and tag were checked.")
+            # Generic on purpose: the image and registry come from the row, and
+            # whether a gate ran comes from the gate report, not from the runner.
+            if i["gate_report"]:
+                out.append(f"- **External image**: `{i['image']}` is not built here, so there is no build provenance "
+                           "to verify. The registry digest and tag were checked, "
+                           "and the gate result below comes from the linked gate report.")
+            else:
+                out.append(f"- **UNGATED external image**: `{i['image']}` is not built here, so there is no build provenance "
+                           "to verify, and no gate report was supplied, so `lanes_gated` stays empty. "
+                           "Only the registry digest and tag were checked.")
         if i["source_commit"]:
             out.append(f"- built from `{i['source_commit']}` of Hal0ai/hal0-runner-images (signed build provenance, refs/heads/main)")
         if i["gate_report"]:
