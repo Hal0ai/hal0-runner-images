@@ -318,7 +318,11 @@ Every item is verified first, and nothing is opened unless all of them pass:
    (not checked for external runners);
 3. its immutable tag (read from the image's `org.opencontainers.image.version`
    label) still points at that digest;
-4. a gate report names the same runner and digest and passed (above).
+4. a gate report names the same runner and digest and passed (above);
+5. the pin table of `manifest.json` in Hal0ai/hal0 has a row for every runner being
+   promoted. hal0 adds a runner's row first; if it has none, the run stops here with
+   `hal0 manifest.json[runners] has no row for '<key>'`, before anything is pushed.
+   Set `create_missing_hal0_row` to have the pin PR add the row instead.
 
 Then it opens two PRs, one each however many runners were promoted, and merges neither:
 
@@ -327,6 +331,12 @@ Then it opens two PRs, one each however many runners were promoted, and merges n
   from the report (the lanes whose `passed` is true);
 - **Hal0ai/hal0:** those runners' rows in the pin table of `manifest.json`, and no
   other file (the job aborts if anything else changed).
+
+The two PRs are pushed one after the other, `images.json` first. If a push fails the
+other still goes out, and the last step of the run, **Report the outcome**, always runs
+(even after a failure) and writes to the job summary which half landed (`pushed`,
+`unchanged`, `failed`, or `no result` for a half whose step did not complete). The run
+fails only when neither branch was pushed and a push failed.
 
 The field names hal0 expects live in one commented block, `ci/hal0_pins.py`
 (`HAL0_PIN_TABLE`, `HAL0_FIELDS`): hal0's `manifest.json` has a top-level `runners`

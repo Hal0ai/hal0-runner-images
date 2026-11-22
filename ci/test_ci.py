@@ -478,6 +478,49 @@ class PromoteTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             promote.edit_hal0_pins(json.dumps({"other": {}}), [self.RESULT])
 
+    def _hal0_dir(self, root, table):
+        d = Path(root) / "app"
+        d.mkdir()
+        (d / hal0_pins.HAL0_PIN_FILE).write_text(json.dumps({hal0_pins.HAL0_PIN_TABLE: table}, indent=2) + "\n")
+        result = Path(root) / "result.json"
+        result.write_text(json.dumps({"items": [dict(self.RESULT)]}))
+        return d, result
+
+    def test_hal0_check_refuses_a_missing_row_and_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as t:
+            d, result = self._hal0_dir(t, {"cpu": {}})
+            pin = d / hal0_pins.HAL0_PIN_FILE
+            before = pin.read_text()
+            with self.assertRaises(SystemExit) as cm:
+                promote.main(["hal0-check", "--result", str(result), "--hal0-dir", str(d)])
+            self.assertIn("has no row for 'standard'", str(cm.exception))
+            self.assertEqual(pin.read_text(), before)
+
+    def test_hal0_check_passes_with_a_row_or_with_create_missing_and_never_writes(self):
+        with tempfile.TemporaryDirectory() as t:
+            d, result = self._hal0_dir(t, {"standard": {}})
+            pin = d / hal0_pins.HAL0_PIN_FILE
+            before = pin.read_text()
+            self.assertEqual(promote.main(["hal0-check", "--result", str(result), "--hal0-dir", str(d)]), 0)
+            self.assertEqual(pin.read_text(), before)
+        with tempfile.TemporaryDirectory() as t:
+            d, result = self._hal0_dir(t, {})
+            pin = d / hal0_pins.HAL0_PIN_FILE
+            before = pin.read_text()
+            self.assertEqual(promote.main(["hal0-check", "--result", str(result), "--hal0-dir", str(d), "--create-missing"]), 0)
+            self.assertEqual(pin.read_text(), before)  # the check adds nothing; hal0-pin does
+
+    def test_hal0_check_is_the_same_refusal_hal0_pin_makes(self):
+        with tempfile.TemporaryDirectory() as t:
+            d, result = self._hal0_dir(t, {})
+            msgs = []
+            for cmd in ("hal0-check", "hal0-pin"):
+                with self.assertRaises(SystemExit) as cm:
+                    promote.main([cmd, "--result", str(result), "--hal0-dir", str(d)])
+                msgs.append(str(cm.exception))
+            self.assertEqual(msgs[0], msgs[1])
+
+
     def test_pin_refs_and_parse_pin_table(self):
         raw = json.dumps({hal0_pins.HAL0_PIN_TABLE: {
             "standard": {"image": "ghcr.io/hal0ai/hal0-runner-standard", "tag": "b1-r1234567", "digest": DIGEST},
@@ -665,6 +708,38 @@ class PromoteTests(unittest.TestCase):
         self.assertFalse(seen[0].has_header("Authorization"))
         self.assertEqual(seen[1].unredirected_hdrs.get("Authorization"), "Bearer tok")
         self.assertNotIn("Authorization", seen[1].headers)  # so a redirect does not carry it
+
+
+class PromoteWorkflowTests(unittest.TestCase):
+    """promote.yml cannot be run offline; pin the properties of its step order that #59 is about."""
+
+    TEXT = (Path(__file__).resolve().parent.parent / ".github/workflows/promote.yml").read_text()
+
+    def _steps(self):
+        return [(p.split("\n", 1)[0], p) for p in self.TEXT.split("\n      - ")[1:]]
+
+    def _index(self, fragment):
+        hits = [i for i, (head, _) in enumerate(self._steps()) if fragment in head]
+        self.assertEqual(len(hits), 1, fragment)
+        return hits[0]
+
+    def test_hal0_row_is_checked_before_anything_is_pushed(self):
+        check = self._index("Verify hal0 has a pin row")
+        body = self._steps()[check][1]
+        self.assertIn("promote.py hal0-check", body)
+        self.assertIn("--create-missing", body)  # the same opt-in the pin step honours
+        self.assertIn("CREATE_MISSING: ${{ inputs.create_missing_hal0_row }}", body)
+        self.assertNotIn("git push", body)
+        self.assertLess(self._index("Verify every digest"), self._index("Check out Hal0ai/hal0"))
+        self.assertLess(self._index("Check out Hal0ai/hal0"), check)
+        self.assertLess(check, self._index("Push the images.json branch"))
+        self.assertLess(check, self._index("Push the pin branch"))
+
+    def test_the_report_is_last_and_always_runs(self):
+        report = self._index("Report the outcome")
+        self.assertEqual(report, len(self._steps()) - 1)
+        self.assertIn("\n        if: always()\n", self._steps()[report][1])
+        self.assertIn("no result", self._steps()[report][1])
 
 
 if __name__ == "__main__":
