@@ -42,6 +42,6 @@ repo = "https://github.com/ggml-org/llama.cpp.git"
 #: new GRAMMAR_RECURSIVE_LIMIT line), so the patch was regenerated; it applies
 #: to b12633 and not to b11840. MAX_REPETITION_THRESHOLD is still 2000
 #: upstream at b12633, so drop_when is not met.
-version = "b12633"
-ref = "9c10c94e16ebc4f3ed7c06264a93bf7e019c3f26"
-ref_description = "release b12633: ggml : fix nonzero clear on WebGPU and non-UMA devices (#32727)"
+version = "b12651"
+ref = "f5e6915c28f10330885fcb9243a93ae98d3115ab"
+ref_description = "release b12651: webgpu : add ROLL support (#31887)"
