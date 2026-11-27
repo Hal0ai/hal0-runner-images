@@ -48,10 +48,10 @@
       "title": "NPU (FastFlowLM)",
       "summary": "Runs supported models on the AMD XDNA 2 NPU, leaving the GPU free.",
       "image": "ghcr.io/hal0ai/hal0-runner-flm",
-      "tag": "1.0.12-r257ff92",
-      "digest": "sha256:f58cbf778ede916b8805b25461da487490f427c773dd5ad024ef306f59c601af",
+      "tag": "1.0.14-r0bafe52",
+      "digest": "sha256:a8db8f05b6b28b376b79797b7cff15b4f090ad25381b33c3b556d530ed68ad66",
       "candidate": null,
-      "gate_report": "https://github.com/Hal0ai/hal0-runner-images/releases/download/gate-flm-1.0.12-r257ff92/gate-flm-1.0.12-r257ff92-20261105T035855Z.json",
+      "gate_report": "https://github.com/Hal0ai/hal0-runner-images/releases/download/gate-flm-1.0.14-r0bafe52/gate-flm-1.0.14-r0bafe52-20261127T214034Z.json",
       "lanes_gated": [
         "npu"
       ],
