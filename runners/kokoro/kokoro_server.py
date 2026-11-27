@@ -9,7 +9,7 @@ src/hal0/providers/kokoro.py):
   GET  /v1/audio/voices         -> {voices: [...]}  (compatibility extension)
 
 CLI flags mirror KokoroProvider.start_cmd():
-  --model_path     Host-mounted model dir; expects kokoro-v0_19.onnx + voices.bin
+  --model_path     Host-mounted model dir; expects kokoro-*.onnx + voices*.bin
   --default_voice  Default voice id (e.g. af_bella)
   --port           Bind port (slot default 8090)
   --host           Bind host (default 0.0.0.0)
