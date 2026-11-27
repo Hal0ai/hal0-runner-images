@@ -68,10 +68,10 @@
       "title": "Kokoro speech",
       "summary": "Text-to-speech on the CPU. Works on any box, no GPU needed.",
       "image": "ghcr.io/hal0ai/hal0-runner-kokoro",
-      "tag": "0.4.9-re14329d",
-      "digest": "sha256:0df4b132be5a5be04f4481940db36365bb95b50aaa0940af0b6f1f5792428325",
+      "tag": "0.6.1-r3a96239",
+      "digest": "sha256:11e52b004294e80ea2018788744081245fd15eff6593960a18166322d12a9e5c",
       "candidate": null,
-      "gate_report": "https://github.com/Hal0ai/hal0-runner-images/releases/download/gate-kokoro-0.4.9-re14329d/gate-kokoro-0.4.9-re14329d-20261011T085319Z.json",
+      "gate_report": "https://github.com/Hal0ai/hal0-runner-images/releases/download/gate-kokoro-0.6.1-r3a96239/gate-kokoro-0.6.1-r3a96239-20261127T200152Z.json",
       "lanes_gated": [
         "cpu"
       ],
