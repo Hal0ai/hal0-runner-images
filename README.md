@@ -17,7 +17,7 @@ One name per runner, used everywhere: the hal0 runner key, the catalogue
 | `flm` | NPU (FastFlowLM) | FastFlowLM on the AMD XDNA 2 NPU | ROCm/FastFlowLM `v1.0.13` | default |
 | `kokoro` | Kokoro speech | text-to-speech on the CPU | kokoro-onnx `0.6.1` | default |
 | `moonshine` | Moonshine transcription | speech-to-text on the CPU | useful-moonshine-onnx `20251121` | default |
-| `comfyui` | ComfyUI | image and video generation on the GPU (ROCm) | Comfy-Org/ComfyUI `0.30.0` (commit `b1693ecb`) | default |
+| `comfyui` | ComfyUI | image and video generation on the GPU (ROCm) | Comfy-Org/ComfyUI `0.46.0` (commit `a277b5bf`) | default |
 | `qwen3tts` | Qwen3 TTS | multilingual text-to-speech on the GPU (ROCm) | qwen-tts `0.1.1` | optional |
 | `xdna` | NPU (ggml-xdna) | llama-server with Tether's ggml-xdna backend on the AMD XDNA 2 NPU | tetherto/qvac-fabric-llm.cpp commit `72f6dfa` | optional |
 | `cuda` | NVIDIA CUDA | llama.cpp on NVIDIA GPUs | ggml-org's own image `server-cuda-b11541` (not built here) | optional |
