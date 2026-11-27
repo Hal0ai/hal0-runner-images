@@ -15,12 +15,12 @@ tier = "default"
 
 [image]
 package = "ghcr.io/hal0ai/hal0-runner-kokoro"
-version = "0.4.9"
+version = "0.6.1"
 
 [source]
 kind = "pypi"
 package = "kokoro-onnx"
-version = "0.4.9"
+version = "0.6.1"
 repo = "https://github.com/thewh1teagle/kokoro-onnx"
 
 [build]

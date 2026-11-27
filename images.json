@@ -81,7 +81,7 @@
       "family": "kokoro",
       "tier": "default",
       "recipe": "runners/kokoro",
-      "maintainer_notes": "Kokoro-82M via kokoro-onnx 0.4.9; requirements.txt pins the full dependency set of the previously shipped image."
+      "maintainer_notes": "Kokoro-82M via kokoro-onnx 0.6.1; requirements.txt pins the full dependency set of the previously shipped image."
     },
     {
       "id": "moonshine",
